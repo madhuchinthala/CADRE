@@ -1,0 +1,74 @@
+# ============================================
+# CADRE Base Configuration
+# ============================================
+# All paths are RELATIVE to the project root.
+# Works on any machine after cloning.
+
+project:
+  name: "CADRE"
+  version: "1.0.0"
+  seed: 42
+
+# ── Paths (all relative) ──
+paths:
+  data_root: "data"
+  bdd100k: "data/bdd100k"
+  nuscenes: "data/nuscenes"
+  model_checkpoint: "checkpoints/llava-v1.5-7b"
+  lora_adapters: "checkpoints/lora_adapters"
+  fisher_matrices: "checkpoints/fisher_matrices"
+  router_checkpoint: "checkpoints/router"
+  replay_buffer: "replay_buffer"
+  output_dir: "outputs"
+  log_dir: "outputs/logs"
+
+# ── Model ──
+model:
+  backbone: "llava-hf/llava-1.5-7b-hf"
+  dtype: "float16"           # float16, bfloat16, float32
+  freeze_backbone: true
+  gradient_checkpointing: true
+
+# ── Training ──
+training:
+  batch_size: 4
+  learning_rate: 2.0e-4
+  weight_decay: 0.01
+  warmup_steps: 500
+  max_epochs: 10
+  gradient_accumulation_steps: 4
+  max_grad_norm: 1.0
+  optimizer: "adamw"
+  scheduler: "cosine"
+  fp16: true
+
+# ── Domain Sequence ──
+domains:
+  sequence:
+    - name: "domain_us"
+      dataset: "bdd100k"
+      description: "US urban/highway driving"
+      split_criteria:
+        weather: ["clear", "partly cloudy"]
+        scene: ["city street", "highway"]
+        timeofday: ["daytime"]
+
+    - name: "domain_sg"
+      dataset: "nuscenes"
+      description: "Singapore urban driving"
+      split_criteria:
+        location: ["singapore-onenorth", "singapore-hollandvillage",
+                    "singapore-queenstown"]
+
+    - name: "domain_eu"
+      dataset: "nuscenes"
+      description: "European urban driving (Boston mapped to EU-style)"
+      split_criteria:
+        location: ["boston-seaport"]
+
+    - name: "domain_rainy"
+      dataset: "bdd100k"
+      description: "Rainy/adverse weather driving"
+      split_criteria:
+        weather: ["rainy", "foggy", "snowy"]
+        timeofday: ["daytime", "night"]

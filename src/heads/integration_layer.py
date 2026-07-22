@@ -1,0 +1,301 @@
+"""
+PART 6: Output Heads + Integration Layer — Multi-Head Fusion
+=============================================================
+Contains all 4 task heads and the integration layer that fuses them:
+  6a: WaypointHead  — future trajectory prediction
+  6b: HazardHead    — obstacle/hazard classification
+  6c: RegulationHead — traffic regulation parsing
+  6d: WeatherHead   — weather/visibility classification
+  6e: IntegrationLayer — attention-based fusion of all heads
+"""
+
+import logging
+from typing import Dict, Optional
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+logger = logging.getLogger(__name__)
+
+
+# ──────────────────────────────────────────────
+# PART 6a: Waypoint Prediction Head
+# ──────────────────────────────────────────────
+class WaypointHead(nn.Module):
+    """
+    Predicts future trajectory waypoints from VLA features.
+    Output: [B, num_future_steps, 2] — (x, y) coordinates
+    """
+
+    def __init__(self, input_dim: int = 4096, hidden_dim: int = 512,
+                 num_future_steps: int = 12, coordinate_dim: int = 2):
+        super().__init__()
+        self.num_steps = num_future_steps
+        self.coord_dim = coordinate_dim
+
+        self.head = nn.Sequential(
+            nn.Linear(input_dim, hidden_dim),
+            nn.ReLU(inplace=True),
+            nn.Dropout(0.1),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.ReLU(inplace=True),
+            nn.Linear(hidden_dim, num_future_steps * coordinate_dim),
+        )
+
+    def forward(self, features: torch.Tensor) -> torch.Tensor:
+        out = self.head(features)
+        return out.view(-1, self.num_steps, self.coord_dim)
+
+
+# ──────────────────────────────────────────────
+# PART 6b: Hazard Detection Head
+# ──────────────────────────────────────────────
+class HazardHead(nn.Module):
+    """
+    Classifies detected hazards in the driving scene.
+    Output: [B, num_classes] — logits per hazard class
+    """
+
+    def __init__(self, input_dim: int = 4096, hidden_dim: int = 256,
+                 num_classes: int = 8):
+        super().__init__()
+        self.head = nn.Sequential(
+            nn.Linear(input_dim, hidden_dim),
+            nn.ReLU(inplace=True),
+            nn.Dropout(0.1),
+            nn.Linear(hidden_dim, num_classes),
+        )
+
+    def forward(self, features: torch.Tensor) -> torch.Tensor:
+        return self.head(features)
+
+
+# ──────────────────────────────────────────────
+# PART 6c: Regulation Parsing Head
+# ──────────────────────────────────────────────
+class RegulationHead(nn.Module):
+    """
+    Identifies applicable traffic regulations.
+    Output: [B, num_classes] — logits per regulation type
+    """
+
+    def __init__(self, input_dim: int = 4096, hidden_dim: int = 256,
+                 num_classes: int = 15):
+        super().__init__()
+        self.head = nn.Sequential(
+            nn.Linear(input_dim, hidden_dim),
+            nn.ReLU(inplace=True),
+            nn.Dropout(0.1),
+            nn.Linear(hidden_dim, num_classes),
+        )
+
+    def forward(self, features: torch.Tensor) -> torch.Tensor:
+        return self.head(features)
+
+
+# ──────────────────────────────────────────────
+# PART 6d: Weather Classification Head
+# ──────────────────────────────────────────────
+class WeatherHead(nn.Module):
+    """
+    Classifies current weather/visibility conditions.
+    Output: [B, num_classes] — logits per weather type
+    """
+
+    def __init__(self, input_dim: int = 4096, hidden_dim: int = 128,
+                 num_classes: int = 6):
+        super().__init__()
+        self.head = nn.Sequential(
+            nn.Linear(input_dim, hidden_dim),
+            nn.ReLU(inplace=True),
+            nn.Dropout(0.1),
+            nn.Linear(hidden_dim, num_classes),
+        )
+
+    def forward(self, features: torch.Tensor) -> torch.Tensor:
+        return self.head(features)
+
+
+# ──────────────────────────────────────────────
+# PART 6e: Integration Layer
+# ──────────────────────────────────────────────
+class IntegrationLayer(nn.Module):
+    """
+    Fuses all 4 head outputs into a unified driving decision.
+
+    Fusion methods:
+    - "concat":    Simple concatenation + linear projection
+    - "attention": Cross-attention between head outputs
+    - "gated":     Gated fusion with learned importance weights
+
+    The attention method is recommended — it allows the model to
+    dynamically weight head importance based on the current scenario
+    (e.g., hazard head matters more in construction zones).
+    """
+
+    def __init__(
+        self,
+        fusion_method: str = "attention",
+        fusion_dim: int = 512,
+        dropout: float = 0.1,
+        waypoint_dim: int = 24,   # 12 steps * 2 coords
+        hazard_dim: int = 8,
+        regulation_dim: int = 15,
+        weather_dim: int = 6,
+    ):
+        super().__init__()
+        self.fusion_method = fusion_method
+        self.total_input_dim = waypoint_dim + hazard_dim + regulation_dim + weather_dim
+
+        if fusion_method == "concat":
+            self.fusion = nn.Sequential(
+                nn.Linear(self.total_input_dim, fusion_dim),
+                nn.ReLU(inplace=True),
+                nn.Dropout(dropout),
+                nn.Linear(fusion_dim, fusion_dim),
+            )
+
+        elif fusion_method == "attention":
+            # Project each head output to same dim, then cross-attend
+            self.proj_waypoint = nn.Linear(waypoint_dim, fusion_dim)
+            self.proj_hazard = nn.Linear(hazard_dim, fusion_dim)
+            self.proj_regulation = nn.Linear(regulation_dim, fusion_dim)
+            self.proj_weather = nn.Linear(weather_dim, fusion_dim)
+
+            self.attention = nn.MultiheadAttention(
+                embed_dim=fusion_dim,
+                num_heads=4,
+                dropout=dropout,
+                batch_first=True,
+            )
+            self.norm = nn.LayerNorm(fusion_dim)
+            self.ffn = nn.Sequential(
+                nn.Linear(fusion_dim, fusion_dim * 2),
+                nn.GELU(),
+                nn.Dropout(dropout),
+                nn.Linear(fusion_dim * 2, fusion_dim),
+            )
+
+        elif fusion_method == "gated":
+            self.gates = nn.ModuleDict({
+                "waypoint": nn.Sequential(nn.Linear(waypoint_dim, 1), nn.Sigmoid()),
+                "hazard": nn.Sequential(nn.Linear(hazard_dim, 1), nn.Sigmoid()),
+                "regulation": nn.Sequential(nn.Linear(regulation_dim, 1), nn.Sigmoid()),
+                "weather": nn.Sequential(nn.Linear(weather_dim, 1), nn.Sigmoid()),
+            })
+            self.projections = nn.ModuleDict({
+                "waypoint": nn.Linear(waypoint_dim, fusion_dim),
+                "hazard": nn.Linear(hazard_dim, fusion_dim),
+                "regulation": nn.Linear(regulation_dim, fusion_dim),
+                "weather": nn.Linear(weather_dim, fusion_dim),
+            })
+            self.output = nn.Linear(fusion_dim, fusion_dim)
+
+        logger.info(f"Integration layer: {fusion_method} fusion, dim={fusion_dim}")
+
+    def forward(
+        self,
+        waypoint_out: torch.Tensor,
+        hazard_out: torch.Tensor,
+        regulation_out: torch.Tensor,
+        weather_out: torch.Tensor,
+    ) -> torch.Tensor:
+        """
+        Fuse all head outputs.
+
+        Args:
+            waypoint_out: [B, num_steps * coord_dim] flattened waypoints
+            hazard_out: [B, num_hazard_classes]
+            regulation_out: [B, num_regulation_classes]
+            weather_out: [B, num_weather_classes]
+
+        Returns:
+            Fused representation [B, fusion_dim]
+        """
+        if self.fusion_method == "concat":
+            combined = torch.cat([waypoint_out, hazard_out, regulation_out, weather_out], dim=-1)
+            return self.fusion(combined)
+
+        elif self.fusion_method == "attention":
+            # Project each head to fusion_dim: [B, fusion_dim]
+            w = self.proj_waypoint(waypoint_out).unsqueeze(1)
+            h = self.proj_hazard(hazard_out).unsqueeze(1)
+            r = self.proj_regulation(regulation_out).unsqueeze(1)
+            v = self.proj_weather(weather_out).unsqueeze(1)
+
+            # Stack as sequence: [B, 4, fusion_dim]
+            tokens = torch.cat([w, h, r, v], dim=1)
+
+            # Self-attention across heads
+            attended, _ = self.attention(tokens, tokens, tokens)
+            attended = self.norm(attended + tokens)  # residual
+            output = self.ffn(attended)
+
+            # Pool across heads: [B, fusion_dim]
+            return output.mean(dim=1)
+
+        elif self.fusion_method == "gated":
+            gate_w = self.gates["waypoint"](waypoint_out)
+            gate_h = self.gates["hazard"](hazard_out)
+            gate_r = self.gates["regulation"](regulation_out)
+            gate_v = self.gates["weather"](weather_out)
+
+            fused = (
+                gate_w * self.projections["waypoint"](waypoint_out)
+                + gate_h * self.projections["hazard"](hazard_out)
+                + gate_r * self.projections["regulation"](regulation_out)
+                + gate_v * self.projections["weather"](weather_out)
+            )
+            return self.output(fused)
+
+
+class MultiHeadDrivingModel(nn.Module):
+    """
+    Complete multi-head driving model combining all 4 heads + integration.
+    Sits on top of the VLA backbone + LoRA adapter output.
+    """
+
+    def __init__(self, vla_output_dim: int = 4096, config: dict = None):
+        super().__init__()
+
+        self.waypoint_head = WaypointHead(input_dim=vla_output_dim)
+        self.hazard_head = HazardHead(input_dim=vla_output_dim)
+        self.regulation_head = RegulationHead(input_dim=vla_output_dim)
+        self.weather_head = WeatherHead(input_dim=vla_output_dim)
+
+        self.integration = IntegrationLayer(
+            fusion_method="attention",
+            waypoint_dim=24,
+            hazard_dim=8,
+            regulation_dim=15,
+            weather_dim=6,
+        )
+
+    def forward(self, vla_features: torch.Tensor) -> Dict[str, torch.Tensor]:
+        """
+        Run all heads and fuse.
+
+        Args:
+            vla_features: Output from VLA backbone + LoRA [B, vla_dim]
+
+        Returns:
+            Dict with keys: waypoints, hazards, regulations, weather, fused
+        """
+        waypoints = self.waypoint_head(vla_features)
+        hazards = self.hazard_head(vla_features)
+        regulations = self.regulation_head(vla_features)
+        weather = self.weather_head(vla_features)
+
+        # Flatten waypoints for fusion
+        waypoints_flat = waypoints.view(waypoints.size(0), -1)
+
+        fused = self.integration(waypoints_flat, hazards, regulations, weather)
+
+        return {
+            "waypoints": waypoints,        # [B, 12, 2]
+            "hazards": hazards,             # [B, 8]
+            "regulations": regulations,     # [B, 15]
+            "weather": weather,             # [B, 6]
+            "fused": fused,                 # [B, 512]
+        }

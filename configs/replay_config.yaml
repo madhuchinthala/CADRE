@@ -1,0 +1,26 @@
+# ============================================
+# Replay Buffer Configuration
+# ============================================
+
+replay:
+  # Maximum number of clips stored per domain
+  buffer_size_per_domain: 2000
+
+  # Fraction of replay data mixed into each training batch
+  # 0.3 = 30% old data, 70% new domain data
+  replay_ratio: 0.3
+
+  # Sampling strategy: "reservoir", "random", "stratified"
+  # reservoir = Reservoir sampling (unbiased, no full pass needed)
+  sampling_strategy: "reservoir"
+
+  # Priority weighting for replay samples
+  use_priority: false
+  priority_alpha: 0.6         # How much prioritization to use (0=uniform, 1=full)
+
+  # Storage format: "tensor" (fast) or "disk" (memory-efficient)
+  storage_mode: "disk"
+
+  # Clip length for video sequences (number of frames per clip)
+  clip_length: 8
+  clip_stride: 4              # Stride between consecutive clips

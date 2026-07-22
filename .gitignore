@@ -1,0 +1,60 @@
+# ============================================
+# CADRE .gitignore
+# ============================================
+
+# ── Large Data (DO NOT push to GitHub) ──
+data/
+checkpoints/
+replay_buffer/
+outputs/
+
+# ── Python ──
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+*.egg
+dist/
+build/
+.eggs/
+
+# ── Virtual Environments ──
+venv/
+env/
+.env
+.venv
+cadre_env/
+
+# ── IDE ──
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.project
+.settings/
+
+# ── Jupyter ──
+.ipynb_checkpoints/
+*.ipynb
+
+# ── OS ──
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ── Logs ──
+*.log
+wandb/
+runs/
+
+# ── Kaggle ──
+kaggle.json
+
+# ── Misc ──
+*.zip
+*.tar.gz
+*.tgz
+*.7z
+*.rar

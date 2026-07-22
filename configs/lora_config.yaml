@@ -1,0 +1,30 @@
+# ============================================
+# LoRA Adapter Configuration
+# ============================================
+
+lora:
+  # Core LoRA hyperparameters
+  rank: 16                    # Low-rank dimension (r)
+  alpha: 32                   # LoRA scaling factor (alpha/r = 2.0)
+  dropout: 0.05               # Dropout on LoRA layers
+
+  # Which modules to inject LoRA into
+  target_modules:
+    - "q_proj"                # Query projection in attention
+    - "v_proj"                # Value projection in attention
+    # Optionally add more for better adaptation:
+    # - "k_proj"
+    # - "o_proj"
+    # - "gate_proj"
+    # - "up_proj"
+    # - "down_proj"
+
+  # Advanced settings
+  bias: "none"                # "none", "all", or "lora_only"
+  task_type: "CAUSAL_LM"     # Task type for PEFT
+  modules_to_save: null       # Additional modules to fully train
+
+  # Per-domain stats (estimated)
+  # Total backbone params:   ~7,063,000,000
+  # LoRA params per domain:  ~24,720,000 (0.35%)
+  # Saved adapter size:      ~50 MB per domain

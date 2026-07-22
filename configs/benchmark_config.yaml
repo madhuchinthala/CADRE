@@ -1,0 +1,51 @@
+# ============================================
+# CADRE-Bench Benchmark Configuration
+# ============================================
+
+benchmark:
+  # Evaluation domains (tested in this order)
+  domains:
+    - "domain_us"
+    - "domain_sg"
+    - "domain_eu"
+    - "domain_rainy"
+
+  # Metrics to compute
+  metrics:
+    - "bwt"                    # Backward Transfer (forgetting)
+    - "fwt"                    # Forward Transfer (zero-shot on new domain)
+    - "plasticity"             # How well it learns new domains
+    - "cdar"                   # Composite Driving Adaptation Rating
+
+  # CDAR formula weights
+  cdar_weights:
+    stability: 0.3             # Weight for BWT component
+    plasticity: 0.3            # Weight for plasticity component
+    transfer: 0.2              # Weight for FWT component
+    efficiency: 0.2            # Weight for parameter efficiency
+
+  # Per-task evaluation
+  task_metrics:
+    waypoint:
+      metric: "ade"            # Average Displacement Error
+      threshold: 2.0           # meters
+
+    hazard:
+      metric: "f1"
+      threshold: 0.85
+
+    regulation:
+      metric: "accuracy"
+      threshold: 0.90
+
+    weather:
+      metric: "accuracy"
+      threshold: 0.95
+
+  # Number of evaluation samples per domain
+  eval_samples: 1000
+
+  # Output
+  output_format: "json"       # json, csv, or both
+  generate_plots: true
+  save_confusion_matrices: true

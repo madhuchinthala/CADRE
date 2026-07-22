@@ -1,0 +1,31 @@
+# ============================================
+# Domain Router Configuration
+# ============================================
+
+router:
+  # Architecture: "mlp", "transformer", or "lightweight_cnn"
+  architecture: "mlp"
+
+  # Input: uses CLS token from vision encoder
+  input_dim: 1024              # LLaVA vision encoder output dim
+  hidden_dims: [512, 256]
+  num_domains: 4               # US, Singapore, Europe, Rainy
+
+  # Training
+  learning_rate: 1.0e-3
+  epochs: 20
+  batch_size: 64
+  weight_decay: 0.01
+
+  # Target accuracy: 95.7%
+  # The router determines which LoRA adapter to activate at inference
+
+  # Confidence threshold for routing
+  confidence_threshold: 0.7    # Below this → use ensemble of top-2 adapters
+
+  # Domain labels
+  domain_labels:
+    0: "domain_us"
+    1: "domain_sg"
+    2: "domain_eu"
+    3: "domain_rainy"
