@@ -9,8 +9,8 @@
 1. [Overview](#-overview)
 2. [Hardware Requirements](#-hardware-requirements)
 3. [Step 1 — Clone the Repository](#-step-1--clone-the-repository)
-4. [Step 2 — Install Python & Conda](#-step-2--install-python--conda)
-5. [Step 3 — Create Conda Environment](#-step-3--create-conda-environment)
+4. [Step 2 — Install Python](#-step-2--install-python)
+5. [Step 3 — Create Virtual Environment](#-step-3--create-virtual-environment)
 6. [Step 4 — Install PyTorch with CUDA](#-step-4--install-pytorch-with-cuda)
 7. [Step 5 — Install Project Dependencies](#-step-5--install-project-dependencies)
 8. [Step 6 — Create Data Directories](#-step-6--create-data-directories)
@@ -44,7 +44,7 @@ CADRE uses a **frozen LLaVA-v1.5-7B backbone** with **LoRA adapters** for per-do
 
 ## 💻 Hardware Requirements
 
-This project is designed to run on a machine with a GPU. Here is what you need:
+This project is designed to run on a machine with a GPU.
 
 | Component | Your Machine (RTX 4000) | Minimum | Recommended |
 |-----------|------------------------|---------|-------------|
@@ -58,18 +58,18 @@ This project is designed to run on a machine with a GPU. Here is what you need:
 | Software | Version | How to Check |
 |----------|---------|-------------|
 | Python | 3.10 or 3.11 | `python --version` |
+| pip | Latest | `pip --version` |
 | Git | Latest | `git --version` |
 | NVIDIA Driver | Latest | `nvidia-smi` |
 | CUDA Toolkit | 11.8 or 12.1 | `nvcc --version` |
-| Conda or Miniconda | Latest | `conda --version` |
 
 ---
 
 ## 📦 Step 1 — Clone the Repository
 
-Open a terminal (PowerShell on Windows, Terminal on Linux) and run:
+Open **PowerShell** and run:
 
-```bash
+```powershell
 # Clone from GitHub
 git clone https://github.com/YOUR_USERNAME/CADRE.git
 
@@ -81,41 +81,64 @@ cd CADRE
 
 ---
 
-## 🐍 Step 2 — Install Python & Conda
+## 🐍 Step 2 — Install Python
 
-If you don't have Conda installed:
+If you don't have Python 3.10 or 3.11 installed:
 
-### On Windows
-1. Download Miniconda from: https://docs.conda.io/en/latest/miniconda.html
-2. Run the installer
-3. Open "Anaconda Prompt" from Start Menu
-4. Verify: `conda --version`
+1. Go to **https://www.python.org/downloads/**
+2. Download **Python 3.11.x** (Windows installer 64-bit)
+3. Run the installer
+4. ⚠️ **CHECK the box "Add Python to PATH"** at the bottom of the installer
+5. Click "Install Now"
 
-### On Linux
-```bash
-# Download Miniconda
-wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh
+After installation, open a **new PowerShell window** and verify:
 
-# Install
-bash Miniconda3-latest-Linux-x86_64.sh
+```powershell
+python --version
+# Should show: Python 3.11.x
 
-# Restart terminal, then verify
-conda --version
+pip --version
+# Should show: pip 24.x.x
 ```
+
+> If `python` doesn't work, try `python3` instead. If neither works, Python is not in your PATH — reinstall with the "Add to PATH" box checked.
 
 ---
 
-## 🔧 Step 3 — Create Conda Environment
+## 🔧 Step 3 — Create Virtual Environment
 
-```bash
-# Create a new environment named "cadre" with Python 3.11
-conda create -n cadre python=3.11 -y
+We use Python's built-in `venv` module — no Conda needed.
 
-# Activate it (you must do this every time you open a new terminal)
-conda activate cadre
+```powershell
+# Make sure you are in the CADRE folder
+cd CADRE
+
+# Create a virtual environment called "venv"
+python -m venv venv
+
+# Activate the virtual environment
+.\venv\Scripts\Activate.ps1
 ```
 
-**You should see `(cadre)` at the start of your terminal prompt.**
+> ⚠️ **If you get a "running scripts is disabled" error**, run this ONCE as Administrator:
+> ```powershell
+> Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
+> ```
+> Then try `.\venv\Scripts\Activate.ps1` again.
+
+**You should see `(venv)` at the start of your terminal prompt.** This means the virtual environment is active.
+
+> **Important:** Every time you open a new PowerShell window, you need to activate the environment again:
+> ```powershell
+> cd CADRE
+> .\venv\Scripts\Activate.ps1
+> ```
+
+### Upgrade pip
+
+```powershell
+python -m pip install --upgrade pip
+```
 
 ---
 
@@ -125,24 +148,24 @@ conda activate cadre
 
 First, check which CUDA version your GPU driver supports:
 
-```bash
+```powershell
 nvidia-smi
 ```
 
 Look at the top-right corner for "CUDA Version". Then install the matching PyTorch:
 
 ### If CUDA 12.1 or higher (recommended):
-```bash
+```powershell
 pip install torch==2.3.1 torchvision==0.18.1 torchaudio==2.3.1 --index-url https://download.pytorch.org/whl/cu121
 ```
 
 ### If CUDA 11.8:
-```bash
+```powershell
 pip install torch==2.3.1 torchvision==0.18.1 torchaudio==2.3.1 --index-url https://download.pytorch.org/whl/cu118
 ```
 
 ### Verify GPU works:
-```bash
+```powershell
 python -c "import torch; print(f'PyTorch: {torch.__version__}'); print(f'CUDA: {torch.cuda.is_available()}'); print(f'GPU: {torch.cuda.get_device_name(0)}')"
 ```
 
@@ -150,7 +173,7 @@ python -c "import torch; print(f'PyTorch: {torch.__version__}'); print(f'CUDA: {
 ```
 PyTorch: 2.3.1
 CUDA: True
-GPU: NVIDIA RTX 4000       ← your GPU name
+GPU: NVIDIA RTX 4000
 ```
 
 > 🚨 If `CUDA: False`, your PyTorch install is wrong. Go back and reinstall with the correct CUDA version.
@@ -159,12 +182,9 @@ GPU: NVIDIA RTX 4000       ← your GPU name
 
 ## 📚 Step 5 — Install Project Dependencies
 
-```bash
-# Make sure you're in the CADRE folder
-cd CADRE
-
-# Make sure cadre environment is active
-conda activate cadre
+```powershell
+# Make sure you are in the CADRE folder and venv is active
+# You should see (venv) in your prompt
 
 # Install all dependencies
 pip install -r requirements.txt
@@ -173,13 +193,14 @@ pip install -r requirements.txt
 pip install -e .
 ```
 
+This installs everything: transformers, PEFT, huggingface_hub, kaggle, numpy, matplotlib, etc.
+
 ---
 
 ## 📁 Step 6 — Create Data Directories
 
 These folders will hold the datasets, model weights, and outputs. They are NOT in Git (ignored by `.gitignore`).
 
-### On Windows (PowerShell):
 ```powershell
 # Data directories
 mkdir -Force data\bdd100k
@@ -207,23 +228,6 @@ mkdir -Force outputs\visualizations
 mkdir -Force outputs\cadre_bench
 ```
 
-### On Linux/macOS:
-```bash
-# Data directories
-mkdir -p data/bdd100k data/nuscenes
-
-# Model checkpoints
-mkdir -p checkpoints/llava-v1.5-7b
-mkdir -p checkpoints/lora_adapters/{domain_us,domain_sg,domain_eu,domain_rainy}
-mkdir -p checkpoints/fisher_matrices checkpoints/router
-
-# Replay buffer storage
-mkdir -p replay_buffer/{domain_us,domain_sg,domain_eu,domain_rainy}
-
-# Outputs
-mkdir -p outputs/{logs,metrics,visualizations,cadre_bench}
-```
-
 ---
 
 ## 📥 Step 7 — Download BDD100K Dataset (Kaggle)
@@ -240,36 +244,27 @@ We use the **solesensei/solesensei_bdd100k** dataset from Kaggle. It contains 10
 
 ### Step 7.2 — Set Up Kaggle API
 
-#### On Windows:
 ```powershell
 # Create .kaggle directory in your home folder
 mkdir -Force $env:USERPROFILE\.kaggle
 
 # Copy the downloaded kaggle.json to that folder
-# (Replace the path below with where your kaggle.json was downloaded)
+# (Replace the path below if your Downloads folder is different)
 Copy-Item "$env:USERPROFILE\Downloads\kaggle.json" "$env:USERPROFILE\.kaggle\kaggle.json"
-```
-
-#### On Linux:
-```bash
-mkdir -p ~/.kaggle
-cp ~/Downloads/kaggle.json ~/.kaggle/kaggle.json
-chmod 600 ~/.kaggle/kaggle.json
 ```
 
 ### Step 7.3 — Download the Dataset
 
-```bash
-# Make sure kaggle is installed
+```powershell
+# Make sure kaggle is installed (it's in requirements.txt, but just in case)
 pip install kaggle
 
-# Download BDD100K (~5.7 GB)
-kaggle datasets download -d solesensei/solesensei_bdd100k -p data/bdd100k
+# Download BDD100K (~5.7 GB) — this will take some time
+kaggle datasets download -d solesensei/solesensei_bdd100k -p data\bdd100k
 ```
 
 ### Step 7.4 — Extract the Dataset
 
-#### On Windows (PowerShell):
 ```powershell
 cd data\bdd100k
 Expand-Archive -Path solesensei_bdd100k.zip -DestinationPath . -Force
@@ -277,22 +272,12 @@ Remove-Item solesensei_bdd100k.zip
 cd ..\..
 ```
 
-#### On Linux:
-```bash
-cd data/bdd100k
-unzip -q solesensei_bdd100k.zip
-rm solesensei_bdd100k.zip
-cd ../..
-```
-
 ### Step 7.5 — Verify BDD100K
 
-```bash
+```powershell
 python -c "
 from pathlib import Path
-import os
 
-# Try to find images
 for base in ['data/bdd100k/bdd100k/images/100k', 'data/bdd100k/images/100k', 'data/bdd100k']:
     p = Path(base)
     if p.exists():
@@ -305,10 +290,6 @@ for base in ['data/bdd100k/bdd100k/images/100k', 'data/bdd100k/images/100k', 'da
         break
 else:
     print('ERROR: Could not find BDD100K images!')
-    print('Directory contents:')
-    for item in Path('data/bdd100k').rglob('*'):
-        if item.is_dir():
-            print(f'  DIR:  {item}')
 "
 ```
 
@@ -337,42 +318,29 @@ Found images at: data/bdd100k/bdd100k/images/100k
 
 1. On the download page, find the **"Mini"** section
 2. Download **`v1.0-mini.tgz`** (~4 GB)
-3. Save it to: `CADRE/data/nuscenes/`
+3. Save it to your `CADRE\data\nuscenes\` folder
 
 ### Step 8.3 — Extract
 
-#### On Windows (PowerShell):
 ```powershell
 cd data\nuscenes
 tar -xzf v1.0-mini.tgz
-# Remove the archive to save space
 Remove-Item v1.0-mini.tgz
 cd ..\..
 ```
 
-#### On Linux:
-```bash
-cd data/nuscenes
-tar -xzf v1.0-mini.tgz
-rm v1.0-mini.tgz
-cd ../..
-```
+> `tar` is built into Windows 10/11. If it doesn't work, use 7-Zip to extract.
 
 ### Step 8.4 — Install nuScenes Devkit
 
-```bash
+```powershell
 pip install nuscenes-devkit
 ```
 
 ### Step 8.5 — Verify nuScenes
 
-```bash
-python -c "
-from nuscenes.nuscenes import NuScenes
-nusc = NuScenes(version='v1.0-mini', dataroot='data/nuscenes', verbose=True)
-print(f'Scenes: {len(nusc.scene)}')
-print(f'Samples: {len(nusc.sample)}')
-"
+```powershell
+python -c "from nuscenes.nuscenes import NuScenes; nusc = NuScenes(version='v1.0-mini', dataroot='data/nuscenes', verbose=True); print(f'Scenes: {len(nusc.scene)}'); print(f'Samples: {len(nusc.sample)}')"
 ```
 
 **Expected output:**
@@ -389,34 +357,34 @@ The LLaVA-v1.5-7B model is our frozen VLA backbone (~14 GB download).
 
 ### Step 9.1 — Install HuggingFace Tools
 
-```bash
+```powershell
 pip install huggingface_hub[cli] transformers accelerate
 ```
 
 ### Step 9.2 — Login to HuggingFace (optional but recommended)
 
-```bash
+```powershell
 huggingface-cli login
 # Paste your access token from https://huggingface.co/settings/tokens
 ```
 
 ### Step 9.3 — Download the Model
 
-```bash
-python scripts/download_llava.py
+```powershell
+python scripts\download_llava.py
 ```
 
 Or manually:
 
-```bash
-huggingface-cli download llava-hf/llava-1.5-7b-hf --local-dir checkpoints/llava-v1.5-7b --local-dir-use-symlinks False
+```powershell
+huggingface-cli download llava-hf/llava-1.5-7b-hf --local-dir checkpoints\llava-v1.5-7b --local-dir-use-symlinks False
 ```
 
 > This downloads **~14 GB**. Make sure you have enough disk space. The download supports resuming if interrupted.
 
 ### Step 9.4 — Verify Model
 
-```bash
+```powershell
 python -c "
 from pathlib import Path
 model_dir = Path('checkpoints/llava-v1.5-7b')
@@ -438,25 +406,25 @@ else:
 
 Run the test suite to make sure all code is correct:
 
-```bash
+```powershell
 # Test 1: Check backbone class structure
-python tests/test_backbone.py
+python tests\test_backbone.py
 
 # Test 2: Check LoRA adapter
-python tests/test_lora.py
+python tests\test_lora.py
 
 # Test 3: Check EWC
-python tests/test_ewc.py
+python tests\test_ewc.py
 
 # Test 4: Check domain router
-python tests/test_router.py
+python tests\test_router.py
 ```
 
 **All should print: `✅ All ... tests passed!`**
 
 ### Quick GPU Smoke Test
 
-```bash
+```powershell
 python -c "
 import torch
 print('='*50)
@@ -467,10 +435,9 @@ print(f'  CUDA:     {torch.cuda.is_available()}')
 if torch.cuda.is_available():
     print(f'  GPU:      {torch.cuda.get_device_name(0)}')
     print(f'  VRAM:     {torch.cuda.get_device_properties(0).total_mem / 1e9:.1f} GB')
-    # Quick tensor test
     x = torch.randn(1000, 1000, device='cuda')
     y = x @ x.T
-    print(f'  Compute:  ✅ Matrix multiply works')
+    print(f'  Compute:  OK - Matrix multiply works')
 print('='*50)
 "
 ```
@@ -481,19 +448,13 @@ print('='*50)
 
 ### Option A: Run All Steps at Once
 
-#### On Linux:
-```bash
-bash scripts/run_pipeline.sh
-```
-
-#### On Windows:
 ```powershell
 scripts\run_pipeline.bat
 ```
 
 ### Option B: Run Step by Step
 
-```bash
+```powershell
 # Part 1 — Load & Freeze Backbone
 python -m src.models.vla_backbone --model_path checkpoints/llava-v1.5-7b --verify
 
@@ -584,27 +545,23 @@ CADRE/
 │   ├── test_ewc.py
 │   └── test_router.py
 │
-├── data/                        ← ⛔ NOT in Git (see .gitignore)
+├── data/                        ← NOT in Git (see .gitignore)
 │   ├── bdd100k/                 ← BDD100K images + labels
 │   └── nuscenes/                ← nuScenes sensor data
 │
-├── checkpoints/                 ← ⛔ NOT in Git
+├── checkpoints/                 ← NOT in Git
 │   ├── llava-v1.5-7b/           ← Pretrained LLaVA model (~14 GB)
 │   ├── lora_adapters/           ← Per-domain LoRA adapters (~50 MB each)
 │   ├── fisher_matrices/         ← EWC Fisher scores
 │   └── router/                  ← Domain router weights
 │
-├── replay_buffer/               ← ⛔ NOT in Git
-│   ├── domain_us/
-│   ├── domain_sg/
-│   ├── domain_eu/
-│   └── domain_rainy/
+├── replay_buffer/               ← NOT in Git
 │
-└── outputs/                     ← ⛔ NOT in Git
-    ├── logs/                    ← Training logs
-    ├── metrics/                 ← JSON metric files
-    ├── visualizations/          ← Plots and figures
-    └── cadre_bench/             ← Benchmark results
+└── outputs/                     ← NOT in Git
+    ├── logs/
+    ├── metrics/
+    ├── visualizations/
+    └── cadre_bench/
 ```
 
 ---
@@ -681,18 +638,18 @@ PART 7 → src/benchmark/cadre_bench.py
 
 | Problem | Solution |
 |---------|----------|
+| `python` not found | Reinstall Python with **"Add to PATH"** checked |
+| `.\venv\Scripts\Activate.ps1` error | Run `Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser` |
 | `CUDA out of memory` | Reduce `batch_size` in `configs/base_config.yaml` to 1 or 2 |
 | `nvidia-smi` not found | Install NVIDIA driver from https://www.nvidia.com/drivers |
-| `nvcc --version` not found | Install CUDA Toolkit from https://developer.nvidia.com/cuda-downloads |
-| `conda: command not found` | Install Miniconda (see Step 2) |
 | `torch.cuda.is_available()` is False | Reinstall PyTorch with correct CUDA version (see Step 4) |
 | `kaggle: command not found` | Run `pip install kaggle` |
-| `kaggle.json` error | Make sure it's in `~/.kaggle/` (Linux) or `%USERPROFILE%\.kaggle\` (Windows) |
-| BDD100K download 403 error | Make sure you accepted the Kaggle dataset terms on the website |
+| `kaggle.json` error | Make sure it's in `%USERPROFILE%\.kaggle\` folder |
+| BDD100K download 403 error | Accept the dataset terms on the Kaggle website first |
 | `ModuleNotFoundError: No module named 'src'` | Run `pip install -e .` from the CADRE folder |
 | `ImportError: No module named 'peft'` | Run `pip install peft` |
 | `ImportError: No module named 'nuscenes'` | Run `pip install nuscenes-devkit` |
-| Windows path errors | Use forward slashes `/` or raw strings `r"C:\path"` in Python |
+| Path errors with backslashes | Use forward slashes `/` in Python code |
 | `git lfs` errors | Install Git LFS: `git lfs install` |
 
 ### GPU Memory Guide
@@ -707,7 +664,7 @@ PART 7 → src/benchmark/cadre_bench.py
 
 ### If Your GPU Has Limited VRAM
 
-Edit `configs/base_config.yaml`:
+Edit `configs\base_config.yaml`:
 ```yaml
 training:
   batch_size: 1                 # Reduce from 4 to 1
