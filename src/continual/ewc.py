@@ -116,10 +116,12 @@ class EWC:
             if isinstance(batch, dict):
                 outputs = model(**batch)
                 loss = outputs.loss if hasattr(outputs, "loss") else criterion(outputs, batch)
+                batch_size = len(batch.get("labels", []))
             else:
                 inputs, targets = batch
                 outputs = model(inputs)
                 loss = criterion(outputs, targets) if criterion else outputs.loss
+                batch_size = targets.size(0)
 
             loss.backward()
 
@@ -128,7 +130,7 @@ class EWC:
                 if param.grad is not None:
                     fisher[name] += param.grad.data.clone() ** 2
 
-            n_samples += 1
+            n_samples += batch_size
 
         # Normalize
         for name in fisher:

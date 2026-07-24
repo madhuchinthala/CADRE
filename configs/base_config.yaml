@@ -62,7 +62,7 @@ domains:
 
     - name: "domain_eu"
       dataset: "nuscenes"
-      description: "European urban driving (Boston mapped to EU-style)"
+      description: "Boston urban driving (nuScenes Boston, not European data)"
       split_criteria:
         location: ["boston-seaport"]
 

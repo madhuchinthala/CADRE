@@ -41,12 +41,20 @@ def main():
 
     from huggingface_hub import snapshot_download
 
-    snapshot_download(
-        repo_id=args.model_id,
-        local_dir=str(output_dir),
-        local_dir_use_symlinks=False,
-        resume_download=True,
-    )
+    # Try modern argument set first, fall back to legacy if it fails
+    try:
+        snapshot_download(
+            repo_id=args.model_id,
+            local_dir=str(output_dir),
+        )
+    except TypeError:
+        # Fallback for older huggingface_hub versions
+        snapshot_download(
+            repo_id=args.model_id,
+            local_dir=str(output_dir),
+            local_dir_use_symlinks=False,
+            resume_download=True,
+        )
 
     print()
     print("=" * 60)

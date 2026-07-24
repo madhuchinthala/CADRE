@@ -113,13 +113,13 @@ class DomainRouter(nn.Module):
             confidences, predictions = probs.max(dim=-1)
 
         domain_names = []
-        for pred, conf in zip(predictions, confidences):
+        for batch_idx, (pred, conf) in enumerate(zip(predictions, confidences)):
             domain_idx = pred.item()
             if conf.item() >= self.confidence_threshold:
                 domain_names.append(self.domain_labels[domain_idx])
             else:
-                # Low confidence: log for monitoring
-                top2 = probs[0].topk(2)
+                # Low confidence: log for monitoring (use correct batch index)
+                top2 = probs[batch_idx].topk(2)
                 logger.warning(
                     f"Low confidence routing: "
                     f"{self.domain_labels[top2.indices[0].item()]} ({top2.values[0]:.2f}), "

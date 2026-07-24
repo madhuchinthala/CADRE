@@ -79,6 +79,7 @@ class ContinualTrainer:
         domain_name: str,
         train_dataloader: DataLoader,
         val_dataloader: Optional[DataLoader] = None,
+        resume: bool = True,
     ) -> Dict[str, float]:
         """
         Train on a single domain with EWC + replay.
@@ -87,6 +88,7 @@ class ContinualTrainer:
             domain_name: Name of the domain (e.g., "domain_us")
             train_dataloader: DataLoader for the new domain
             val_dataloader: Optional validation DataLoader
+            resume: If True, resume from last checkpoint if available
 
         Returns:
             Dict of training metrics
@@ -95,6 +97,19 @@ class ContinualTrainer:
         logger.info(f"  Training domain: {domain_name}")
         logger.info(f"{'='*60}")
 
+        # Try to load checkpoint if resuming
+        start_epoch = 0
+        training_history = []
+        best_val_score = 0.0
+        
+        if resume:
+            checkpoint_data = self._load_checkpoint(domain_name)
+            if checkpoint_data:
+                start_epoch = checkpoint_data["epoch"]  # Next epoch to train (0-indexed)
+                training_history = checkpoint_data["history"]
+                best_val_score = checkpoint_data["best_val_score"]
+                logger.info(f"✅ Resumed from checkpoint: will continue from Epoch {start_epoch+1}")
+
         # Create mixed dataloader with replay
         mixed_loader = self.replay_buffer.get_mixed_dataloader(
             new_domain_dataset=train_dataloader.dataset,
@@ -102,10 +117,7 @@ class ContinualTrainer:
             batch_size=train_dataloader.batch_size,
         )
 
-        best_val_score = 0.0
-        training_history = []
-
-        for epoch in range(self.max_epochs):
+        for epoch in range(start_epoch, self.max_epochs):
             # ── Train epoch ──
             train_loss = self._train_epoch(mixed_loader, epoch)
 
@@ -128,6 +140,11 @@ class ContinualTrainer:
             if val_score > best_val_score:
                 best_val_score = val_score
 
+            # Save checkpoint with NEXT epoch to train (for proper resume)
+            # If epoch=0 completes, next_epoch=1, so resume starts from epoch 1
+            next_epoch = epoch + 1
+            self._save_checkpoint(domain_name, next_epoch, training_history, best_val_score)
+
         # ── Post-training: compute Fisher for EWC ──
         logger.info(f"Computing Fisher Information for {domain_name}...")
         self.ewc.compute_fisher(
@@ -147,6 +164,24 @@ class ContinualTrainer:
             dataloader=train_dataloader,
         )
         self.replay_buffer.save(domain_name)
+
+        # ── Post-training: save LoRA adapter ──
+        logger.info(f"Saving LoRA adapter for {domain_name}...")
+        try:
+            from src.adapters.lora_adapter import LoRAAdapterManager
+            adapter_dir = Path("checkpoints/lora_adapters") / domain_name
+            adapter_dir.mkdir(parents=True, exist_ok=True)
+            # Save using PEFT's native save_pretrained if available
+            if hasattr(self.model, "save_pretrained"):
+                self.model.save_pretrained(str(adapter_dir))
+                logger.info(f"✅ LoRA adapter saved to {adapter_dir}")
+            else:
+                logger.warning(f"⚠️  Model does not support save_pretrained(); adapter not saved.")
+        except Exception as e:
+            logger.warning(f"⚠️  Failed to save LoRA adapter: {e}")
+
+        # Clean up checkpoint after successful training
+        self._delete_checkpoint(domain_name)
 
         return {
             "domain": domain_name,
@@ -177,7 +212,26 @@ class ContinualTrainer:
                 # Move batch to the same device as the model parameters (handles accelerate device_map)
                 model_device = next(self.model.parameters()).device
                 batch = _to_device(batch, model_device)
-                outputs = self.model(**batch)
+                
+                # Extract task-specific labels (waypoints, hazard, regulation, weather) that aren't model inputs
+                # These will be used for multi-head training in the future
+                task_labels = {}
+                model_batch = {}
+                valid_model_keys = {'pixel_values', 'input_ids', 'labels', 'attention_mask', 'pad_token_id', 'output_attentions', 'output_hidden_states', 'return_dict'}
+                
+                for key, value in batch.items():
+                    if key in valid_model_keys:
+                        model_batch[key] = value
+                    else:
+                        # Store task labels for future multi-head training
+                        task_labels[key] = value
+                
+                # Generate attention_mask if missing (all 1s for all tokens)
+                if 'attention_mask' not in model_batch and 'input_ids' in model_batch:
+                    input_ids = model_batch['input_ids']
+                    model_batch['attention_mask'] = torch.ones_like(input_ids, dtype=torch.long)
+                
+                outputs = self.model(**model_batch)
                 task_loss = outputs.loss
             else:
                 inputs, targets = batch
@@ -235,7 +289,17 @@ class ContinualTrainer:
                         return obj
 
                     batch = _to_device(batch, model_device)
-                    outputs = self.model(**batch)
+                    
+                    # Filter batch to only include valid model arguments
+                    valid_model_keys = {'pixel_values', 'input_ids', 'labels', 'attention_mask', 'pad_token_id', 'output_attentions', 'output_hidden_states', 'return_dict'}
+                    model_batch = {k: v for k, v in batch.items() if k in valid_model_keys}
+                    
+                    # Generate attention_mask if missing
+                    if 'attention_mask' not in model_batch and 'input_ids' in model_batch:
+                        input_ids = model_batch['input_ids']
+                        model_batch['attention_mask'] = torch.ones_like(input_ids, dtype=torch.long)
+                    
+                    outputs = self.model(**model_batch)
                     preds = outputs.logits.argmax(dim=-1)
                     targets = batch.get("labels", batch.get("input_ids"))
                 else:
@@ -250,25 +314,118 @@ class ContinualTrainer:
 
         return correct / max(total, 1)
 
+    def _save_checkpoint(self, domain_name: str, epoch: int, history: list, best_val_score: float):
+        """Save training checkpoint for resuming.
+        
+        Args:
+            next_epoch: The 0-indexed epoch to resume from (1 = will show "Epoch 2" to user)
+        """
+        checkpoint_dir = Path("checkpoints/training_checkpoints") / domain_name
+        checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
-# ── CLI Entry Point ──
+        checkpoint_path = checkpoint_dir / "latest.pt"
+        checkpoint = {
+            "epoch": next_epoch,  # Next epoch to train (0-indexed)
+            "step": 0,
+            "history": history,
+            "best_val_score": best_val_score,
+            "model_state_dict": self.model.state_dict(),
+            "optimizer_state_dict": self.optimizer.state_dict(),
+        }
+        torch.save(checkpoint, checkpoint_path)
+        logger.debug(f"Checkpoint saved: will resume from Epoch {next_epoch+1}")
+
+    def _load_checkpoint(self, domain_name: str) -> Optional[Dict]:
+        """Load training checkpoint if available."""
+        checkpoint_path = Path("checkpoints/training_checkpoints") / domain_name / "latest.pt"
+        if not checkpoint_path.exists():
+            return None
+
+        try:
+            checkpoint = torch.load(checkpoint_path, map_location=self.device)
+            # Load model and optimizer states
+            self.model.load_state_dict(checkpoint["model_state_dict"])
+            self.optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+            logger.info(f"✅ Loaded checkpoint from {checkpoint_path}")
+            return checkpoint
+        except Exception as e:
+            logger.warning(f"⚠️  Failed to load checkpoint: {e}")
+            return None
+
+    def _delete_checkpoint(self, domain_name: str):
+        """Delete checkpoint after successful training completion."""
+        checkpoint_path = Path("checkpoints/training_checkpoints") / domain_name / "latest.pt"
+        if checkpoint_path.exists():
+            try:
+                checkpoint_path.unlink()
+                logger.debug(f"Deleted checkpoint: {checkpoint_path}")
+            except Exception as e:
+                logger.warning(f"Failed to delete checkpoint: {e}")
+
+
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
 
     parser = argparse.ArgumentParser(description="Continual training with EWC + Replay")
     parser.add_argument("--config", default="configs/base_config.yaml")
     parser.add_argument("--domain", required=True)
-    parser.add_argument("--dataset", choices=["bdd100k", "nuscenes"], required=True)
-    parser.add_argument("--ewc_lambda", type=float, default=5000.0)
-    parser.add_argument("--replay_ratio", type=float, default=0.3)
-    parser.add_argument("--replay_size", type=int, default=2000)
     parser.add_argument("--epochs", type=int, default=10)
+    parser.add_argument("--device", default="cuda")
+    parser.add_argument("--resume", action="store_true", default=True, help="Resume from last checkpoint if available (default: True)")
+    parser.add_argument("--no-resume", dest="resume", action="store_false", help="Start fresh (do not resume)")
     args = parser.parse_args()
 
-    print(f"Continual trainer configured for domain: {args.domain}")
-    print(f"  Dataset:      {args.dataset}")
-    print(f"  EWC lambda:   {args.ewc_lambda}")
-    print(f"  Replay ratio: {args.replay_ratio}")
-    print(f"  Replay size:  {args.replay_size}")
-    print(f"  Epochs:       {args.epochs}")
-    print("\nTo run: load backbone, inject LoRA, then call train_domain()")
+    # Load config
+    with open(args.config, "r") as f:
+        cfg = yaml.safe_load(f)
+
+    # Load backbone (processor + model)
+    from src.models.vla_backbone import VLABackbone
+    from src.adapters.lora_adapter import LoRAAdapterManager
+
+    backbone = VLABackbone(
+        model_path=cfg["paths"]["model_checkpoint"],
+        dtype=cfg["model"]["dtype"],
+        gradient_checkpointing=cfg["model"]["gradient_checkpointing"]
+    )
+    model = backbone.get_model()
+
+    # EWC + Replay buffer
+    ewc = EWC(lambda_ewc=5000.0)
+    replay = DomainReplayBuffer(
+        buffer_size_per_domain=2000,
+        replay_ratio=0.3,
+        base_dir=cfg["paths"].get("replay_buffer", "replay_buffer")
+    )
+
+    # Inject LoRA adapters
+    lora_mgr = LoRAAdapterManager(config_path="configs/lora_config.yaml")
+    try:
+        model = lora_mgr.inject_lora(model)
+    except Exception as e:
+        logger.warning(f"LoRA injection failed: {e} — continuing with base model")
+
+    # Trainer
+    trainer = ContinualTrainer(
+        model=model,
+        ewc=ewc,
+        replay_buffer=replay,
+        max_epochs=args.epochs,
+        device=args.device
+    )
+
+    # DataLoader for the target domain
+    from src.data.dataloader import get_dataloader
+    processor = backbone.get_processor()
+    train_dl = get_dataloader(args.config, args.domain, split="train", processor=processor)
+    val_dl = get_dataloader(args.config, args.domain, split="val", processor=processor)
+
+    # Train
+    metrics = trainer.train_domain(
+        domain_name=args.domain,
+        train_dataloader=train_dl,
+        val_dataloader=val_dl,
+        resume=args.resume
+    )
+    logger.info(f"✅ Training complete: {metrics}")
+

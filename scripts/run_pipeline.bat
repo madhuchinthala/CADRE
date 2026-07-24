@@ -16,13 +16,26 @@ echo [PART 1/7] Loading and freezing VLA backbone...
 python -m src.models.vla_backbone --model_path checkpoints/llava-v1.5-7b --verify
 if errorlevel 1 goto :error
 
-REM Part 2-4 — Train domains with EWC + Replay
-for %%D in (domain_us domain_sg domain_eu domain_rainy) do (
-    echo.
-    echo [PART 2-4] Training domain: %%D...
-    python -m src.continual.continual_trainer --config configs/base_config.yaml --domain %%D --dataset bdd100k --ewc_lambda 5000 --replay_ratio 0.3 --replay_size 2000 --epochs 10
-    if errorlevel 1 goto :error
-)
+REM Part 2-4 — Train domains with EWC + Replay (correct dataset per domain)
+echo.
+echo [PART 2-4] Training domain_us (BDD100K)...
+python -m src.continual.continual_trainer --config configs/base_config.yaml --domain domain_us --epochs 10 --device cuda
+if errorlevel 1 goto :error
+
+echo.
+echo [PART 2-4] Training domain_sg (nuScenes)...
+python -m src.continual.continual_trainer --config configs/base_config.yaml --domain domain_sg --epochs 10 --device cuda
+if errorlevel 1 goto :error
+
+echo.
+echo [PART 2-4] Training domain_eu (nuScenes)...
+python -m src.continual.continual_trainer --config configs/base_config.yaml --domain domain_eu --epochs 10 --device cuda
+if errorlevel 1 goto :error
+
+echo.
+echo [PART 2-4] Training domain_rainy (BDD100K)...
+python -m src.continual.continual_trainer --config configs/base_config.yaml --domain domain_rainy --epochs 10 --device cuda
+if errorlevel 1 goto :error
 
 REM Part 5 — Train Domain Router
 echo.

@@ -4,6 +4,15 @@ PART 1: VLA Backbone — Load and Freeze LLaVA-v1.5-7B
 Downloads (or loads from disk) the pretrained LLaVA-v1.5-7B model,
 freezes ALL backbone parameters, and exposes the vision encoder
 and language model for downstream adapter injection.
+
+FIX (this file): the processor must have `patch_size` and
+`vision_feature_select_strategy` set explicitly, or transformers will
+NOT expand the <image> placeholder token into per-patch tokens during
+tokenization. Without this, input_ids end up with 0 image tokens while
+pixel_values still has N images, causing:
+
+    ValueError: The input provided to the model are wrong. The number of
+    image tokens is 0 while the number of image given to the model is N.
 """
 
 import argparse
@@ -28,6 +37,10 @@ class VLABackbone:
     - The model is in eval mode for the backbone
     - Vision encoder outputs and LLM hidden states are accessible
       for LoRA injection and downstream heads
+    - self.processor.patch_size and
+      self.processor.vision_feature_select_strategy are set so that
+      calling self.processor(text=..., images=...) correctly expands
+      the <image> placeholder into the right number of tokens.
     """
 
     def __init__(
@@ -53,6 +66,32 @@ class VLABackbone:
             device_map=device_map,
             low_cpu_mem_usage=True,
         )
+
+        # ── FIX: enable automatic <image> token expansion ──
+        # Newer `transformers` versions require these two attributes on the
+        # processor to correctly expand the <image> placeholder into
+        # `num_patches` tokens matching the vision tower's output. Without
+        # this, input_ids will contain 0 image tokens and the forward pass
+        # will raise a ValueError about mismatched image token counts.
+        self.processor.patch_size = self.model.config.vision_config.patch_size
+        self.processor.vision_feature_select_strategy = (
+            self.model.config.vision_feature_select_strategy
+        )
+        logger.info(
+            f"Processor image-token expansion enabled: "
+            f"patch_size={self.processor.patch_size}, "
+            f"vision_feature_select_strategy={self.processor.vision_feature_select_strategy}"
+        )
+
+        # Number of image tokens each image will expand to — useful for
+        # dataset/collate code that needs to know this ahead of time.
+        image_size = self.model.config.vision_config.image_size
+        patches_per_side = image_size // self.processor.patch_size
+        num_patches = patches_per_side ** 2
+        if self.processor.vision_feature_select_strategy == "full":
+            num_patches += 1  # includes CLS token
+        self.num_image_tokens = num_patches
+        logger.info(f"Each image expands to {self.num_image_tokens} tokens")
 
         # ── Freeze ALL parameters ──
         self._freeze_backbone()
@@ -109,6 +148,17 @@ class VLABackbone:
             )
         return vision_outputs.last_hidden_state
 
+    def build_prompt(self, text: str) -> str:
+        """
+        Prefix a raw instruction/prompt with the required <image> placeholder
+        token so the processor knows where to splice in image features.
+
+        Use this when constructing dataset prompts, e.g.:
+            prompt = backbone.build_prompt("Describe the driving scene.")
+        """
+        image_token = getattr(self.processor, "image_token", "<image>")
+        return f"{image_token}\n{text}"
+
     def verify(self):
         """Run a quick sanity check to ensure the model is loaded correctly."""
         total = sum(p.numel() for p in self.model.parameters())
@@ -125,6 +175,9 @@ class VLABackbone:
         print(f"  Trainable params:  {trainable:,}")
         print(f"  Frozen params:     {total - trainable:,}")
         print(f"  Frozen ratio:      {(total - trainable) / total * 100:.2f}%")
+        print(f"  Patch size:        {self.processor.patch_size}")
+        print(f"  Vision select:     {self.processor.vision_feature_select_strategy}")
+        print(f"  Tokens per image:  {self.num_image_tokens}")
         print(f"{'='*60}")
 
         assert trainable == 0, f"Expected 0 trainable params, got {trainable}"

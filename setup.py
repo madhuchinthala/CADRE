@@ -13,7 +13,8 @@ setup(
     packages=find_packages(),
     python_requires=">=3.10",
     install_requires=[
-        "torch>=2.1.0",
+        # NOTE: torch>=2.1.0 must be installed MANUALLY with correct CUDA version BEFORE this.
+        # See README.md for PyTorch installation instructions.
         "transformers>=4.40.0",
         "peft>=0.11.0",
         "accelerate>=0.30.0",
