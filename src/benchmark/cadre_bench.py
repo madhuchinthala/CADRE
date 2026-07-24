@@ -345,7 +345,10 @@ class CADREBench:
         self.metrics.set_param_counts(backbone_params, adapter_params)
 
         if single_task_bounds is not None:
-            self.metrics.set_baselines(single_task_bounds, zero_shot_perf or np.zeros(self.T))
+            self.metrics.set_baselines(
+    single_task_bounds,
+    zero_shot_perf if zero_shot_perf is not None else np.zeros(self.T)
+)
 
         report = self.metrics.full_report()
 

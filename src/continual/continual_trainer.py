@@ -160,19 +160,31 @@ class ContinualTrainer:
         self.model.train()
         total_loss = 0
         n_batches = 0
-
         pbar = tqdm(dataloader, desc=f"Epoch {epoch+1}")
+
+        def _to_device(obj, device):
+            if torch.is_tensor(obj):
+                return obj.to(device)
+            if isinstance(obj, dict):
+                return {k: _to_device(v, device) for k, v in obj.items()}
+            if isinstance(obj, (list, tuple)):
+                return type(obj)(_to_device(v, device) for v in obj)
+            return obj
 
         for step, batch in enumerate(pbar):
             # Forward pass
             if isinstance(batch, dict):
-                batch = {k: v.to(self.device) for k, v in batch.items()}
+                # Move batch to the same device as the model parameters (handles accelerate device_map)
+                model_device = next(self.model.parameters()).device
+                batch = _to_device(batch, model_device)
                 outputs = self.model(**batch)
                 task_loss = outputs.loss
             else:
                 inputs, targets = batch
-                inputs = inputs.to(self.device)
-                targets = targets.to(self.device)
+                # move to model device as well
+                model_device = next(self.model.parameters()).device
+                inputs = inputs.to(model_device)
+                targets = targets.to(model_device)
                 outputs = self.model(inputs)
                 task_loss = self.criterion(outputs.logits if hasattr(outputs, 'logits') else outputs, targets)
 
@@ -212,15 +224,26 @@ class ContinualTrainer:
         with torch.no_grad():
             for batch in dataloader:
                 if isinstance(batch, dict):
-                    batch = {k: v.to(self.device) for k, v in batch.items()}
+                    model_device = next(self.model.parameters()).device
+                    def _to_device(obj, device):
+                        if torch.is_tensor(obj):
+                            return obj.to(device)
+                        if isinstance(obj, dict):
+                            return {k: _to_device(v, device) for k, v in obj.items()}
+                        if isinstance(obj, (list, tuple)):
+                            return type(obj)(_to_device(v, device) for v in obj)
+                        return obj
+
+                    batch = _to_device(batch, model_device)
                     outputs = self.model(**batch)
                     preds = outputs.logits.argmax(dim=-1)
                     targets = batch.get("labels", batch.get("input_ids"))
                 else:
                     inputs, targets = batch
-                    outputs = self.model(inputs.to(self.device))
+                    model_device = next(self.model.parameters()).device
+                    outputs = self.model(inputs.to(model_device))
                     preds = (outputs.logits if hasattr(outputs, 'logits') else outputs).argmax(dim=-1)
-                    targets = targets.to(self.device)
+                    targets = targets.to(model_device)
 
                 correct += (preds == targets).sum().item()
                 total += targets.size(0)
