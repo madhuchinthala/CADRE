@@ -16,25 +16,27 @@ echo [PART 1/7] Loading and freezing VLA backbone...
 python -m src.models.vla_backbone --model_path checkpoints/llava-v1.5-7b --verify
 if errorlevel 1 goto :error
 
-REM Part 2-4 — Train domains with EWC + Replay (correct dataset per domain)
+REM Part 2-4 — Train domains with EWC + Replay (correct dataset per domain,
+REM resolved automatically inside get_dataloader() from base_config.yaml)
+REM 5 epochs, capped at 1500 samples/epoch (~14 min/epoch at ~2.2s/it, batch_size=4)
 echo.
-echo [PART 2-4] Training domain_us (BDD100K)...
-python -m src.continual.continual_trainer --config configs/base_config.yaml --domain domain_us --epochs 10 --device cuda
+echo [PART 2-4] Training domain_us...
+python -m src.continual.continual_trainer --config configs/base_config.yaml --domain domain_us --epochs 5 --device cuda --max-samples-per-epoch 1500
 if errorlevel 1 goto :error
 
 echo.
-echo [PART 2-4] Training domain_sg (nuScenes)...
-python -m src.continual.continual_trainer --config configs/base_config.yaml --domain domain_sg --epochs 10 --device cuda
+echo [PART 2-4] Training domain_sg...
+python -m src.continual.continual_trainer --config configs/base_config.yaml --domain domain_sg --epochs 5 --device cuda --max-samples-per-epoch 1500
 if errorlevel 1 goto :error
 
 echo.
-echo [PART 2-4] Training domain_eu (nuScenes)...
-python -m src.continual.continual_trainer --config configs/base_config.yaml --domain domain_eu --epochs 10 --device cuda
+echo [PART 2-4] Training domain_eu...
+python -m src.continual.continual_trainer --config configs/base_config.yaml --domain domain_eu --epochs 5 --device cuda --max-samples-per-epoch 1500
 if errorlevel 1 goto :error
 
 echo.
-echo [PART 2-4] Training domain_rainy (BDD100K)...
-python -m src.continual.continual_trainer --config configs/base_config.yaml --domain domain_rainy --epochs 10 --device cuda
+echo [PART 2-4] Training domain_rainy...
+python -m src.continual.continual_trainer --config configs/base_config.yaml --domain domain_rainy --epochs 5 --device cuda --max-samples-per-epoch 1500
 if errorlevel 1 goto :error
 
 REM Part 5 — Train Domain Router
@@ -46,7 +48,7 @@ if errorlevel 1 goto :error
 REM Part 6 — Train Output Heads
 echo.
 echo [PART 6/7] Training output heads...
-python -m src.heads.integration_layer --config configs/heads_config.yaml --heads waypoint,hazard,regulation,weather --epochs 15
+python -m src.heads.integration_layer --config configs/heads_config.yaml --heads waypoint,hazard,regulation,weather --domains domain_us,domain_sg,domain_eu,domain_rainy --epochs 15
 if errorlevel 1 goto :error
 
 REM Part 7 — Run CADRE-Bench
