@@ -114,9 +114,15 @@ class EWC:
 
             # Forward pass — adapt this to your data format
             if isinstance(batch, dict):
-                outputs = model(**batch)
-                loss = outputs.loss if hasattr(outputs, "loss") else criterion(outputs, batch)
-                batch_size = len(batch.get("labels", []))
+                model_device = next(model.parameters()).device
+                valid_model_keys = {'pixel_values', 'input_ids', 'labels', 'attention_mask', 'pad_token_id', 'output_attentions', 'output_hidden_states', 'return_dict'}
+                model_batch = {k: v.to(model_device) if isinstance(v, torch.Tensor) else v for k, v in batch.items() if k in valid_model_keys}
+                if 'attention_mask' not in model_batch and 'input_ids' in model_batch:
+                    input_ids = model_batch['input_ids']
+                    model_batch['attention_mask'] = torch.ones_like(input_ids, dtype=torch.long)
+                outputs = model(**model_batch)
+                loss = outputs.loss if hasattr(outputs, "loss") and outputs.loss is not None else criterion(outputs, batch)
+                batch_size = len(batch.get("labels", [1]))
             else:
                 inputs, targets = batch
                 outputs = model(inputs)

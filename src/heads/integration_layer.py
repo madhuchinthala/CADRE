@@ -287,9 +287,7 @@ class MultiHeadDrivingModel(nn.Module):
         regulations = self.regulation_head(vla_features)
         weather = self.weather_head(vla_features)
 
-        # Flatten waypoints for fusion
         waypoints_flat = waypoints.view(waypoints.size(0), -1)
-
         fused = self.integration(waypoints_flat, hazards, regulations, weather)
 
         return {
@@ -299,3 +297,118 @@ class MultiHeadDrivingModel(nn.Module):
             "weather": weather,             # [B, 6]
             "fused": fused,                 # [B, 512]
         }
+
+
+class HeadsTrainer:
+    """Trainer for multi-head driving model."""
+
+    def __init__(self, model: MultiHeadDrivingModel, lr: float = 1e-3, weight_decay: float = 0.01):
+        self.model = model
+        self.optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
+        self.mse_loss = nn.MSELoss()
+        self.ce_loss = nn.CrossEntropyLoss()
+
+    def train_epoch(self, dataloader, device: str = "cuda") -> float:
+        self.model.train()
+        total_loss = 0
+        n_batches = 0
+
+        for batch in dataloader:
+            if not isinstance(batch, dict):
+                continue
+            pixel_values = batch.get("pixel_values")
+            if pixel_values is None or not isinstance(pixel_values, torch.Tensor):
+                continue
+
+            pixel_values = pixel_values.to(device)
+            B = pixel_values.shape[0]
+
+            # Pool / adapt pixel values [B, C, H, W] to 4096-dim VLA feature representation
+            feat = F.adaptive_avg_pool2d(pixel_values, (64, 64)).view(B, -1)
+            if feat.shape[-1] != 4096:
+                feat = F.interpolate(feat.unsqueeze(1), size=4096, mode="linear").squeeze(1)
+
+            self.optimizer.zero_grad()
+            outputs = self.model(feat)
+
+            # Compute losses
+            loss = torch.tensor(0.0, device=device)
+            if "waypoints" in batch and isinstance(batch["waypoints"], torch.Tensor):
+                loss += self.mse_loss(outputs["waypoints"], batch["waypoints"].to(device))
+            if "hazard" in batch and isinstance(batch["hazard"], torch.Tensor):
+                loss += self.ce_loss(outputs["hazards"], batch["hazard"].to(device))
+            if "regulation" in batch and isinstance(batch["regulation"], torch.Tensor):
+                loss += self.ce_loss(outputs["regulations"], batch["regulation"].to(device))
+            if "weather" in batch and isinstance(batch["weather"], torch.Tensor):
+                loss += self.ce_loss(outputs["weather"], batch["weather"].to(device))
+
+            loss.backward()
+            self.optimizer.step()
+
+            total_loss += loss.item()
+            n_batches += 1
+
+        return total_loss / max(n_batches, 1)
+
+    def save(self, path: str = "checkpoints/heads"):
+        save_path = Path(path)
+        save_path.mkdir(parents=True, exist_ok=True)
+        torch.save(self.model.state_dict(), save_path / "multi_head_model.pt")
+        logger.info(f"Multi-head model saved to {save_path / 'multi_head_model.pt'}")
+
+
+# ── CLI Entry Point ──
+if __name__ == "__main__":
+    import argparse
+    import yaml
+    from torch.utils.data import DataLoader, ConcatDataset
+    from pathlib import Path
+
+    logging.basicConfig(level=logging.INFO)
+
+    parser = argparse.ArgumentParser(description="Train output heads and integration layer")
+    parser.add_argument("--config", default="configs/heads_config.yaml")
+    parser.add_argument("--base_config", default="configs/base_config.yaml")
+    parser.add_argument("--heads", default="waypoint,hazard,regulation,weather")
+    parser.add_argument("--domains", default="domain_us,domain_sg,domain_eu,domain_rainy")
+    parser.add_argument("--epochs", type=int, default=15)
+    parser.add_argument("--device", default="cuda")
+    args = parser.parse_args()
+
+    device = args.device if torch.cuda.is_available() and args.device == "cuda" else "cpu"
+    domain_list = [d.strip() for d in args.domains.split(",") if d.strip()]
+
+    model = MultiHeadDrivingModel(vla_output_dim=4096).to(device)
+    total_params = sum(p.numel() for p in model.parameters())
+    logger.info(f"MultiHeadDrivingModel initialized with {total_params:,} parameters.")
+
+    from src.data.dataloader import get_dataloader
+
+    datasets = []
+    for domain_name in domain_list:
+        try:
+            dl = get_dataloader(args.base_config, domain_name, split="train", batch_size=16)
+            datasets.append(dl.dataset)
+        except Exception as e:
+            logger.warning(f"Could not load dataset for domain '{domain_name}': {e}")
+
+    if datasets:
+        combined = ConcatDataset(datasets)
+        train_loader = DataLoader(combined, batch_size=16, shuffle=True)
+
+        trainer = HeadsTrainer(model)
+        logger.info(f"Training multi-head model on {len(combined)} samples for {args.epochs} epochs...")
+
+        for epoch in range(args.epochs):
+            avg_loss = trainer.train_epoch(train_loader, device=device)
+            if (epoch + 1) % 5 == 0 or epoch == args.epochs - 1:
+                logger.info(f"Epoch {epoch+1}/{args.epochs}: loss={avg_loss:.4f}")
+
+        trainer.save("checkpoints/heads")
+    else:
+        logger.warning("No datasets loaded; saving initialized multi-head model weights.")
+        save_path = Path("checkpoints/heads")
+        save_path.mkdir(parents=True, exist_ok=True)
+        torch.save(model.state_dict(), save_path / "multi_head_model.pt")
+        logger.info(f"Multi-head model saved to {save_path / 'multi_head_model.pt'}")
+

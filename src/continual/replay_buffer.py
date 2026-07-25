@@ -10,7 +10,7 @@ maintain competence on old domains.
 import logging
 import random
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Callable
 
 import torch
 from torch.utils.data import Dataset, DataLoader, ConcatDataset
@@ -150,7 +150,8 @@ class DomainReplayBuffer:
         new_domain_dataset: Dataset,
         exclude_domain: Optional[str] = None,
         batch_size: int = 4,
-        num_workers: int = 4,
+        num_workers: int = 0,
+        collate_fn: Optional[Callable] = None,
     ) -> DataLoader:
         """
         Create a DataLoader that mixes new domain data with replay data.
@@ -164,6 +165,7 @@ class DomainReplayBuffer:
             exclude_domain: Domain being trained (exclude from replay)
             batch_size: Batch size
             num_workers: Number of data loading workers
+            collate_fn: Custom batch collation function
 
         Returns:
             Mixed DataLoader
@@ -178,6 +180,7 @@ class DomainReplayBuffer:
                 shuffle=True,
                 num_workers=num_workers,
                 pin_memory=True,
+                collate_fn=collate_fn,
             )
 
         # Calculate how many replay samples to include
@@ -205,6 +208,7 @@ class DomainReplayBuffer:
             shuffle=True,
             num_workers=num_workers,
             pin_memory=True,
+            collate_fn=collate_fn,
         )
 
     def save(self, domain_name: str):

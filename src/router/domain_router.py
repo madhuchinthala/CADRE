@@ -209,21 +209,81 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="Train domain router")
     parser.add_argument("--config", default="configs/router_config.yaml")
+    parser.add_argument("--base_config", default="configs/base_config.yaml")
     parser.add_argument("--domains", type=str, required=True, help="Comma-separated domain names")
     parser.add_argument("--epochs", type=int, default=20)
+    parser.add_argument("--device", default="cuda")
     args = parser.parse_args()
+
+    device = args.device if torch.cuda.is_available() and args.device == "cuda" else "cpu"
 
     with open(args.config, "r") as f:
         config = yaml.safe_load(f)["router"]
 
+    domain_list = [d.strip() for d in args.domains.split(",") if d.strip()]
+    domain_map = {domain: i for i, domain in enumerate(domain_list)}
+
     router = DomainRouter(
         input_dim=config["input_dim"],
         hidden_dims=config["hidden_dims"],
-        num_domains=config["num_domains"],
+        num_domains=len(domain_list),
         confidence_threshold=config["confidence_threshold"],
-        domain_labels={int(k): v for k, v in config["domain_labels"].items()},
-    )
+        domain_labels={i: domain for i, domain in enumerate(domain_list)},
+    ).to(device)
 
     total_params = sum(p.numel() for p in router.parameters())
-    print(f"Router parameters: {total_params:,}")
-    print(f"Domains: {args.domains}")
+    logger.info(f"Router initialized: {total_params:,} parameters for domains {domain_list}")
+
+    # Build dataset of visual features for router training
+    feature_samples = []
+    label_samples = []
+
+    from src.data.dataloader import get_dataloader
+
+    for domain_name in domain_list:
+        try:
+            dl = get_dataloader(args.base_config, domain_name, split="train", batch_size=16)
+            domain_idx = domain_map[domain_name]
+            count = 0
+            for batch in dl:
+                if count >= 200:  # Cap at 200 batches per domain for quick router training
+                    break
+                pixel_values = batch.get("pixel_values")
+                if pixel_values is not None and isinstance(pixel_values, torch.Tensor):
+                    # Flatten image to 1024-dim visual feature vector
+                    B = pixel_values.shape[0]
+                    # Adaptive average pool pixel values to [B, 1024]
+                    feat = F.adaptive_avg_pool2d(pixel_values, (32, 32)).view(B, -1)
+                    if feat.shape[-1] != config["input_dim"]:
+                        # Linear projection / resize to match input_dim
+                        feat = F.interpolate(feat.unsqueeze(1), size=config["input_dim"], mode="linear").squeeze(1)
+                    feature_samples.append(feat)
+                    label_samples.append(torch.full((B,), domain_idx, dtype=torch.long))
+                    count += B
+        except Exception as e:
+            logger.warning(f"Could not load samples for domain '{domain_name}': {e}")
+
+    if feature_samples:
+        all_features = torch.cat(feature_samples, dim=0)
+        all_labels = torch.cat(label_samples, dim=0)
+
+        dataset = torch.utils.data.TensorDataset(all_features, all_labels)
+        router_loader = DataLoader(dataset, batch_size=32, shuffle=True)
+
+        trainer = RouterTrainer(router, learning_rate=config.get("learning_rate", 1e-3))
+
+        logger.info(f"Training router on {len(dataset)} feature samples for {args.epochs} epochs...")
+        for epoch in range(args.epochs):
+            avg_loss = trainer.train_epoch(router_loader, device=device)
+            if (epoch + 1) % 5 == 0 or epoch == args.epochs - 1:
+                acc = trainer.evaluate(router_loader, device=device)
+                logger.info(f"Epoch {epoch+1}/{args.epochs}: loss={avg_loss:.4f}, accuracy={acc:.1f}%")
+
+        trainer.save("checkpoints/router")
+    else:
+        logger.warning("No data samples loaded; saving initialized router weights.")
+        save_path = Path("checkpoints/router")
+        save_path.mkdir(parents=True, exist_ok=True)
+        torch.save(router.state_dict(), save_path / "router.pt")
+        logger.info(f"Router saved to {save_path / 'router.pt'}")
+
