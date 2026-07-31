@@ -202,6 +202,49 @@ class RouterTrainer:
         self.router.load_state_dict(torch.load(load_path, map_location="cpu", weights_only=True))
         logger.info(f"Router loaded from {load_path}")
 
+    def save_checkpoint(self, path: str, epoch: int):
+        """Save training checkpoint for resuming (router + optimizer + scheduler + epoch)."""
+        save_path = Path(path)
+        save_path.mkdir(parents=True, exist_ok=True)
+        checkpoint = {
+            "epoch": epoch,
+            "router_state_dict": self.router.state_dict(),
+            "optimizer_state_dict": self.optimizer.state_dict(),
+            "scheduler_state_dict": self.scheduler.state_dict(),
+        }
+        torch.save(checkpoint, save_path / "router_checkpoint.pt")
+        logger.debug(f"Router checkpoint saved: will resume from epoch {epoch + 1}")
+
+    def load_checkpoint(self, path: str, device: str = "cpu"):
+        """
+        Load training checkpoint. Returns the epoch to resume from, or 0 if
+        no checkpoint exists.
+        """
+        ckpt_path = Path(path) / "router_checkpoint.pt"
+        if not ckpt_path.exists():
+            return 0
+        try:
+            checkpoint = torch.load(ckpt_path, map_location=device, weights_only=False)
+            self.router.load_state_dict(checkpoint["router_state_dict"])
+            self.optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+            self.scheduler.load_state_dict(checkpoint["scheduler_state_dict"])
+            epoch = checkpoint["epoch"]
+            logger.info(f"✅ Loaded router checkpoint: will resume from epoch {epoch + 1}")
+            return epoch
+        except Exception as e:
+            logger.warning(f"⚠️  Failed to load router checkpoint: {e}")
+            return 0
+
+    def delete_checkpoint(self, path: str):
+        """Delete training checkpoint after successful completion."""
+        ckpt_path = Path(path) / "router_checkpoint.pt"
+        if ckpt_path.exists():
+            try:
+                ckpt_path.unlink()
+                logger.debug(f"Deleted router checkpoint: {ckpt_path}")
+            except Exception as e:
+                logger.warning(f"Failed to delete router checkpoint: {e}")
+
 
 # ── CLI Entry Point ──
 if __name__ == "__main__":
@@ -213,6 +256,8 @@ if __name__ == "__main__":
     parser.add_argument("--domains", type=str, required=True, help="Comma-separated domain names")
     parser.add_argument("--epochs", type=int, default=20)
     parser.add_argument("--device", default="cuda")
+    parser.add_argument("--resume", action="store_true", default=True, help="Resume from last checkpoint if available (default: True)")
+    parser.add_argument("--no-resume", dest="resume", action="store_false", help="Start fresh (do not resume)")
     args = parser.parse_args()
 
     device = args.device if torch.cuda.is_available() and args.device == "cuda" else "cpu"
@@ -272,14 +317,28 @@ if __name__ == "__main__":
 
         trainer = RouterTrainer(router, learning_rate=config.get("learning_rate", 1e-3))
 
-        logger.info(f"Training router on {len(dataset)} feature samples for {args.epochs} epochs...")
-        for epoch in range(args.epochs):
-            avg_loss = trainer.train_epoch(router_loader, device=device)
-            if (epoch + 1) % 5 == 0 or epoch == args.epochs - 1:
-                acc = trainer.evaluate(router_loader, device=device)
-                logger.info(f"Epoch {epoch+1}/{args.epochs}: loss={avg_loss:.4f}, accuracy={acc:.1f}%")
+        # Resume from checkpoint if available
+        start_epoch = 0
+        checkpoint_dir = "checkpoints/router"
+        if args.resume:
+            start_epoch = trainer.load_checkpoint(checkpoint_dir, device=device)
 
-        trainer.save("checkpoints/router")
+        if start_epoch >= args.epochs:
+            logger.info(f"Router training already completed ({start_epoch}/{args.epochs} epochs). Skipping.")
+        else:
+            logger.info(f"Training router on {len(dataset)} feature samples for epochs {start_epoch+1}..{args.epochs}...")
+            for epoch in range(start_epoch, args.epochs):
+                avg_loss = trainer.train_epoch(router_loader, device=device)
+                if (epoch + 1) % 5 == 0 or epoch == args.epochs - 1:
+                    acc = trainer.evaluate(router_loader, device=device)
+                    logger.info(f"Epoch {epoch+1}/{args.epochs}: loss={avg_loss:.4f}, accuracy={acc:.1f}%")
+
+                # Save checkpoint after each epoch
+                trainer.save_checkpoint(checkpoint_dir, epoch + 1)
+
+            # Save final router weights and clean up checkpoint
+            trainer.save(checkpoint_dir)
+            trainer.delete_checkpoint(checkpoint_dir)
     else:
         logger.warning("No data samples loaded; saving initialized router weights.")
         save_path = Path("checkpoints/router")

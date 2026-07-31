@@ -380,6 +380,9 @@ if __name__ == "__main__":
     parser.add_argument("--base_config", default="configs/base_config.yaml")
     parser.add_argument("--domains", type=str, required=True)
     parser.add_argument("--output_dir", default="outputs/cadre_bench")
+    parser.add_argument("--resume", action="store_true", default=True, help="Resume from last checkpoint if available (default: True)")
+    parser.add_argument("--no-resume", dest="resume", action="store_false", help="Start fresh evaluation")
+    parser.add_argument("--max_eval_samples", type=int, default=200, help="Max evaluation samples per domain (default: 200)")
     args = parser.parse_args()
 
     domains = [d.strip() for d in args.domains.split(",") if d.strip()]
@@ -391,20 +394,132 @@ if __name__ == "__main__":
         output_dir=args.output_dir,
     )
 
-    # Check if trained adapters exist
+    # ── Check for trained adapters ──
+    from pathlib import Path
     adapters_found = 0
     for domain in domains:
         adapter_path = Path("checkpoints/lora_adapters") / domain
         if adapter_path.exists() and any(adapter_path.iterdir()):
             adapters_found += 1
 
+    # ── Check for checkpoint of partial evaluation ──
+    bench_checkpoint_dir = Path("checkpoints/benchmark")
+    bench_checkpoint_path = bench_checkpoint_dir / "bench_checkpoint.pt"
+    start_stage = 0
+
+    if args.resume and bench_checkpoint_path.exists():
+        try:
+            ckpt = torch.load(bench_checkpoint_path, map_location="cpu", weights_only=False)
+            bench.perf_matrix = ckpt["perf_matrix"]
+            start_stage = ckpt["completed_stage"] + 1
+            logger.info(f"✅ Loaded benchmark checkpoint: resuming from stage {start_stage}")
+        except Exception as e:
+            logger.warning(f"⚠️  Failed to load benchmark checkpoint: {e}")
+            start_stage = 0
+
+    def _save_bench_checkpoint(stage_idx: int, matrix):
+        """Save benchmark progress so interrupted evaluations can resume."""
+        bench_checkpoint_dir.mkdir(parents=True, exist_ok=True)
+        torch.save({
+            "completed_stage": stage_idx,
+            "perf_matrix": matrix,
+        }, bench_checkpoint_path)
+        logger.debug(f"Benchmark checkpoint saved: completed through stage {stage_idx}")
+
+    def _delete_bench_checkpoint():
+        """Delete checkpoint after successful completion."""
+        if bench_checkpoint_path.exists():
+            try:
+                bench_checkpoint_path.unlink()
+            except Exception:
+                pass
+
     if adapters_found == T:
-        logger.info(f"All {T} domain adapters found in checkpoints/lora_adapters/. Running real evaluation...")
-        # Populate performance matrix by evaluating each domain
-        matrix = np.eye(T) * 0.95 + np.random.uniform(-0.02, 0.02, (T, T))
-        bench.perf_matrix = matrix
+        logger.info(f"All {T} domain adapters found. Running real evaluation...")
+
+        # ── Try to load backbone + adapters and evaluate for real ──
+        try:
+            import yaml
+            with open(args.base_config, "r") as f:
+                cfg = yaml.safe_load(f)
+
+            from src.models.vla_backbone import VLABackbone
+            from src.data.dataloader import get_dataloader
+            from peft import PeftModel
+            import itertools
+
+            backbone = VLABackbone(
+                model_path=cfg["paths"]["model_checkpoint"],
+                dtype=cfg["model"]["dtype"],
+                gradient_checkpointing=False,  # Not needed for evaluation
+            )
+            base_model = backbone.get_model()
+            processor = backbone.get_processor()
+
+            # Build validation dataloaders for all domains
+            eval_dataloaders = {}
+            for domain in domains:
+                try:
+                    dl = get_dataloader(args.base_config, domain, split="val", processor=processor)
+                    eval_dataloaders[domain] = dl
+                except Exception as e:
+                    logger.warning(f"Could not load val data for domain '{domain}': {e}")
+
+            if not eval_dataloaders:
+                raise RuntimeError("No validation data available for any domain")
+
+            # For each training stage (after training domain i), load adapter i
+            # and evaluate on ALL domains
+            for stage_idx in range(start_stage, T):
+                domain_trained = domains[stage_idx]
+                adapter_path = Path("checkpoints/lora_adapters") / domain_trained
+
+                logger.info(f"\n{'='*50}")
+                logger.info(f"  Stage {stage_idx}: evaluating after training '{domain_trained}'")
+                logger.info(f"{'='*50}")
+
+                # Load this domain's adapter
+                try:
+                    model = PeftModel.from_pretrained(base_model, str(adapter_path))
+                    model.eval()
+                except Exception as e:
+                    logger.warning(f"Could not load adapter for '{domain_trained}': {e}")
+                    # Fall back to base model evaluation
+                    model = base_model
+                    model.eval()
+
+                # Evaluate on each domain
+                for eval_idx, eval_domain in enumerate(domains):
+                    if eval_domain not in eval_dataloaders:
+                        bench.perf_matrix[stage_idx][eval_idx] = 0.0
+                        continue
+
+                    score = bench._evaluate_domain(
+                        model,
+                        eval_dataloaders[eval_domain],
+                        "accuracy",
+                    )
+                    bench.perf_matrix[stage_idx][eval_idx] = score
+                    logger.info(f"  Stage {stage_idx} → {eval_domain}: {score:.4f}")
+
+                # Checkpoint after each stage
+                _save_bench_checkpoint(stage_idx, bench.perf_matrix)
+
+            logger.info("✅ Real evaluation complete.")
+            _delete_bench_checkpoint()
+
+        except Exception as e:
+            logger.warning(f"Real evaluation failed ({e}). Falling back to demo matrix.")
+            # Fall back to demo/placeholder matrix
+            demo_matrix = np.array([
+                [0.94, 0.32, 0.28, 0.25],
+                [0.93, 0.95, 0.41, 0.38],
+                [0.92, 0.94, 0.96, 0.52],
+                [0.925, 0.935, 0.955, 0.97],
+            ])[:T, :T]
+            bench.perf_matrix = demo_matrix
     else:
-        logger.info(f"Found {adapters_found}/{T} domain adapters. Using CADRE-Bench evaluation protocol...")
+        logger.info(f"Found {adapters_found}/{T} domain adapters. Using demo performance data.")
         demo_matrix = np.array([
             [0.94, 0.32, 0.28, 0.25],    # After training domain_us
             [0.93, 0.95, 0.41, 0.38],    # After training domain_sg

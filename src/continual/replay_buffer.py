@@ -90,33 +90,46 @@ class DomainReplayBuffer:
             if idx < self.buffer_size:
                 self.buffers[domain_name][idx] = sample
 
-    def populate_from_dataloader(self, domain_name: str, dataloader: DataLoader):
+    def populate_from_dataloader(self, domain_name: str, dataloader: DataLoader, max_scan_samples: int = 10000):
         """
-        Fill the replay buffer from a full dataloader (typically after training).
+        Fill the replay buffer from a dataloader (typically after training).
 
         Args:
             domain_name: Domain identifier
             dataloader: DataLoader for the completed domain
+            max_scan_samples: Maximum number of samples to scan. Reservoir
+                sampling gives unbiased results even on a subset. Default
+                10,000 is plenty for a 2,000-slot buffer.
         """
+        from tqdm import tqdm
+
         logger.info(f"Populating replay buffer for domain: {domain_name}")
 
-        for batch in dataloader:
+        total_batches = min(len(dataloader), max_scan_samples // max(dataloader.batch_size, 1))
+        n_scanned = 0
+
+        for batch in tqdm(dataloader, desc=f"Replay buffer ({domain_name})", total=total_batches):
+            if n_scanned >= max_scan_samples:
+                break
+
             # Handle batched data — add each sample individually
             if isinstance(batch, dict):
                 batch_size = next(iter(batch.values())).shape[0]
                 for i in range(batch_size):
                     sample = {k: v[i].cpu() for k, v in batch.items()}
                     self.add_sample(domain_name, sample)
+                n_scanned += batch_size
             elif isinstance(batch, (list, tuple)):
                 batch_size = batch[0].shape[0]
                 for i in range(batch_size):
                     sample = tuple(b[i].cpu() for b in batch)
                     self.add_sample(domain_name, sample)
+                n_scanned += batch_size
 
         logger.info(
             f"Buffer for '{domain_name}': "
             f"{len(self.buffers[domain_name])}/{self.buffer_size} slots filled "
-            f"(from {self.sample_counts[domain_name]} total samples)"
+            f"(scanned {n_scanned} of {len(dataloader.dataset)} total samples)"
         )
 
     def get_replay_dataset(self, exclude_domain: Optional[str] = None) -> Optional[Dataset]:

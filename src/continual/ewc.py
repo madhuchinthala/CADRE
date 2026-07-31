@@ -178,8 +178,10 @@ class EWC:
         else:
             for name in new_fisher:
                 if name in self.running_fisher:
+                    # Ensure device match (running_fisher may have been loaded on CPU)
                     self.running_fisher[name] = (
-                        self.gamma * self.running_fisher[name] + new_fisher[name]
+                        self.gamma * self.running_fisher[name].to(new_fisher[name].device)
+                        + new_fisher[name]
                     )
                 else:
                     self.running_fisher[name] = new_fisher[name]

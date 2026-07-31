@@ -139,6 +139,34 @@ class ContinualTrainer:
                 best_val_score = checkpoint_data["best_val_score"]
                 logger.info(f"✅ Resumed from checkpoint: will continue from Epoch {start_epoch+1}")
 
+        # ── Load EWC state from ALL previously trained domains ──
+        # Each domain runs as a separate process, so we must reload the
+        # accumulated Fisher/optimal-params from prior domains on disk.
+        fisher_dir = Path("checkpoints/fisher_matrices")
+        if fisher_dir.exists():
+            for fisher_file in sorted(fisher_dir.glob("ewc_*.pt")):
+                prev_domain = fisher_file.stem.replace("ewc_", "")
+                if prev_domain == domain_name:
+                    continue  # Don't load our own (not yet computed)
+                try:
+                    self.ewc.load(path=str(fisher_dir), domain_name=prev_domain)
+                    logger.info(f"📋 Loaded EWC state from previous domain: {prev_domain}")
+                except Exception as e:
+                    logger.warning(f"⚠️  Failed to load EWC for {prev_domain}: {e}")
+
+        # Also load replay buffers from previous domains
+        replay_dir = Path(self.replay_buffer.base_dir)
+        if replay_dir.exists():
+            for buf_dir in sorted(replay_dir.iterdir()):
+                if buf_dir.is_dir() and buf_dir.name != domain_name:
+                    buf_file = buf_dir / "buffer.pt"
+                    if buf_file.exists() and buf_dir.name not in self.replay_buffer.buffers:
+                        try:
+                            self.replay_buffer.load(buf_dir.name)
+                            logger.info(f"📋 Loaded replay buffer from previous domain: {buf_dir.name}")
+                        except Exception as e:
+                            logger.warning(f"⚠️  Failed to load replay for {buf_dir.name}: {e}")
+
         # Create mixed dataloader with replay
         mixed_loader = self.replay_buffer.get_mixed_dataloader(
             new_domain_dataset=train_dataloader.dataset,
@@ -182,28 +210,34 @@ class ContinualTrainer:
             self._save_checkpoint(domain_name, next_epoch, training_history, best_val_score)
 
         # ── Post-training: compute Fisher for EWC ──
-        logger.info(f"Computing Fisher Information for {domain_name}...")
-        self.ewc.compute_fisher(
-            model=self.model,
-            dataloader=train_dataloader,
-            domain_name=domain_name,
-        )
-        self.ewc.save(
-            path="checkpoints/fisher_matrices",
-            domain_name=domain_name,
-        )
+        fisher_path = Path("checkpoints/fisher_matrices") / f"ewc_{domain_name}.pt"
+        if fisher_path.exists():
+            logger.info(f"⏭  Fisher already saved at {fisher_path} — loading instead of recomputing.")
+            self.ewc.load(path="checkpoints/fisher_matrices", domain_name=domain_name)
+        else:
+            logger.info(f"Computing Fisher Information for {domain_name}...")
+            self.ewc.compute_fisher(
+                model=self.model,
+                dataloader=train_dataloader,
+                domain_name=domain_name,
+            )
+            self.ewc.save(
+                path="checkpoints/fisher_matrices",
+                domain_name=domain_name,
+            )
 
         # ── Post-training: populate replay buffer ──
-        # NOTE: this scans the *entire* train_dataloader (not capped by
-        # max_samples_per_epoch) — reservoir sampling needs to see every
-        # sample to stay unbiased. This step can take a while even when
-        # training itself is fast; that's expected, not a bug.
-        logger.info(f"Populating replay buffer for {domain_name}...")
-        self.replay_buffer.populate_from_dataloader(
-            domain_name=domain_name,
-            dataloader=train_dataloader,
-        )
-        self.replay_buffer.save(domain_name)
+        replay_path = Path(self.replay_buffer.base_dir) / domain_name / "buffer.pt"
+        if replay_path.exists():
+            logger.info(f"⏭  Replay buffer already saved at {replay_path} — loading instead of re-populating.")
+            self.replay_buffer.load(domain_name)
+        else:
+            logger.info(f"Populating replay buffer for {domain_name}...")
+            self.replay_buffer.populate_from_dataloader(
+                domain_name=domain_name,
+                dataloader=train_dataloader,
+            )
+            self.replay_buffer.save(domain_name)
 
         # ── Restore best checkpoint before saving the final adapter ──
         # Without this, the adapter saved below would reflect whichever
@@ -561,11 +595,31 @@ if __name__ == "__main__":
     )
     model = backbone.get_model()
 
-    # EWC + Replay buffer
-    ewc = EWC(lambda_ewc=5000.0)
+    # EWC + Replay buffer — read settings from config files
+    ewc_cfg = {}
+    try:
+        with open("configs/ewc_config.yaml", "r") as f:
+            ewc_cfg = yaml.safe_load(f).get("ewc", {})
+    except Exception:
+        logger.warning("Could not read configs/ewc_config.yaml, using defaults")
+
+    ewc = EWC(
+        lambda_ewc=ewc_cfg.get("lambda_ewc", 5000.0),
+        fisher_n_samples=ewc_cfg.get("fisher_n_samples", 200),
+        variant=ewc_cfg.get("variant", "online_ewc"),
+        gamma=ewc_cfg.get("gamma", 0.95),
+    )
+
+    replay_cfg = {}
+    try:
+        with open("configs/replay_config.yaml", "r") as f:
+            replay_cfg = yaml.safe_load(f).get("replay", {})
+    except Exception:
+        logger.warning("Could not read configs/replay_config.yaml, using defaults")
+
     replay = DomainReplayBuffer(
-        buffer_size_per_domain=2000,
-        replay_ratio=0.3,
+        buffer_size_per_domain=replay_cfg.get("buffer_size_per_domain", 2000),
+        replay_ratio=replay_cfg.get("replay_ratio", 0.3),
         base_dir=cfg["paths"].get("replay_buffer", "replay_buffer")
     )
 
