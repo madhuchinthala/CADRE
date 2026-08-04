@@ -7,14 +7,20 @@ Contains all 4 task heads and the integration layer that fuses them:
   6c: RegulationHead — traffic regulation parsing
   6d: WeatherHead   — weather/visibility classification
   6e: IntegrationLayer — attention-based fusion of all heads
+
+FIX: Added --max-samples-per-epoch and tqdm progress bar to HeadsTrainer,
+matching continual_trainer.py's pattern. Without this, each epoch
+processes the entire combined 4-domain dataset uncapped.
 """
 
+import itertools
 import logging
 from typing import Dict, Optional
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from tqdm import tqdm
 
 logger = logging.getLogger(__name__)
 
@@ -302,18 +308,38 @@ class MultiHeadDrivingModel(nn.Module):
 class HeadsTrainer:
     """Trainer for multi-head driving model."""
 
-    def __init__(self, model: MultiHeadDrivingModel, lr: float = 1e-3, weight_decay: float = 0.01):
+    def __init__(self, model: MultiHeadDrivingModel, lr: float = 1e-3, weight_decay: float = 0.01,
+                 max_samples_per_epoch: int = None):
         self.model = model
         self.optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
         self.mse_loss = nn.MSELoss()
         self.ce_loss = nn.CrossEntropyLoss()
+        self.max_samples_per_epoch = max_samples_per_epoch
 
-    def train_epoch(self, dataloader, device: str = "cuda") -> float:
+    def train_epoch(self, dataloader, device: str = "cuda", epoch: int = 0) -> float:
         self.model.train()
         total_loss = 0
         n_batches = 0
 
-        for batch in dataloader:
+        # Limit batches per epoch if max_samples_per_epoch is set
+        max_batches = None
+        if self.max_samples_per_epoch is not None:
+            batch_size = dataloader.batch_size or 1
+            max_batches = max(1, self.max_samples_per_epoch // batch_size)
+            logger.info(
+                f"Epoch {epoch+1}: limiting to {max_batches} batches "
+                f"(~{max_batches * batch_size} samples)"
+            )
+
+        iterable = dataloader
+        total_for_bar = len(dataloader)
+        if max_batches is not None:
+            iterable = itertools.islice(dataloader, max_batches)
+            total_for_bar = max_batches
+
+        pbar = tqdm(iterable, desc=f"Heads Epoch {epoch+1}", total=total_for_bar)
+
+        for batch in pbar:
             if not isinstance(batch, dict):
                 continue
             pixel_values = batch.get("pixel_values")
@@ -347,6 +373,8 @@ class HeadsTrainer:
 
             total_loss += loss.item()
             n_batches += 1
+
+            pbar.set_postfix({"loss": f"{total_loss/n_batches:.4f}"})
 
         return total_loss / max(n_batches, 1)
 
@@ -414,6 +442,11 @@ if __name__ == "__main__":
     parser.add_argument("--domains", default="domain_us,domain_sg,domain_eu,domain_rainy")
     parser.add_argument("--epochs", type=int, default=15)
     parser.add_argument("--device", default="cuda")
+    parser.add_argument(
+        "--max-samples-per-epoch", type=int, default=3000,
+        help="Limit training samples per epoch (default 3000). Prevents each "
+             "epoch from processing the entire combined dataset.",
+    )
     parser.add_argument("--resume", action="store_true", default=True, help="Resume from last checkpoint if available (default: True)")
     parser.add_argument("--no-resume", dest="resume", action="store_false", help="Start fresh (do not resume)")
     args = parser.parse_args()
@@ -439,7 +472,7 @@ if __name__ == "__main__":
         combined = ConcatDataset(datasets)
         train_loader = DataLoader(combined, batch_size=16, shuffle=True)
 
-        trainer = HeadsTrainer(model)
+        trainer = HeadsTrainer(model, max_samples_per_epoch=args.max_samples_per_epoch)
         checkpoint_dir = "checkpoints/heads"
 
         # Resume from checkpoint if available
@@ -451,11 +484,12 @@ if __name__ == "__main__":
             logger.info(f"Heads training already completed ({start_epoch}/{args.epochs} epochs). Skipping.")
         else:
             logger.info(f"Training multi-head model on {len(combined)} samples for epochs {start_epoch+1}..{args.epochs}...")
+            if args.max_samples_per_epoch:
+                logger.info(f"  (capped at {args.max_samples_per_epoch} samples per epoch)")
 
             for epoch in range(start_epoch, args.epochs):
-                avg_loss = trainer.train_epoch(train_loader, device=device)
-                if (epoch + 1) % 5 == 0 or epoch == args.epochs - 1:
-                    logger.info(f"Epoch {epoch+1}/{args.epochs}: loss={avg_loss:.4f}")
+                avg_loss = trainer.train_epoch(train_loader, device=device, epoch=epoch)
+                logger.info(f"Epoch {epoch+1}/{args.epochs}: loss={avg_loss:.4f}")
 
                 # Save checkpoint after each epoch
                 trainer.save_checkpoint(checkpoint_dir, epoch + 1)

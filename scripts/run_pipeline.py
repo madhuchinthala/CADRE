@@ -247,6 +247,7 @@ def build_stages(args) -> List[Stage]:
                 "--heads", "waypoint,hazard,regulation,weather",
                 "--domains", ",".join(args.domains),
                 "--epochs", str(args.heads_epochs),
+                "--max-samples-per-epoch", "3000",
             ],
         )
     )
