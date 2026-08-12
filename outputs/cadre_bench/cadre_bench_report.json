@@ -1,0 +1,52 @@
+{
+  "metrics": {
+    "BWT": -1.17,
+    "FWT": 23.33,
+    "Plasticity": 98.46,
+    "Efficiency": 99.65,
+    "CDAR": 0.9735
+  },
+  "performance_matrix": [
+    [
+      0.94,
+      0.32,
+      0.28,
+      0.25
+    ],
+    [
+      0.93,
+      0.95,
+      0.41,
+      0.38
+    ],
+    [
+      0.92,
+      0.94,
+      0.96,
+      0.52
+    ],
+    [
+      0.925,
+      0.935,
+      0.955,
+      0.97
+    ]
+  ],
+  "single_task_bounds": [
+    0.97,
+    0.96,
+    0.98,
+    0.97
+  ],
+  "zero_shot_performance": [
+    0.2,
+    0.18,
+    0.22,
+    0.15
+  ],
+  "param_stats": {
+    "backbone_params": 7063000000,
+    "adapter_params_per_domain": 24720000,
+    "overhead_percentage": 0.35
+  }
+}

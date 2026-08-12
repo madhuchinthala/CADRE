@@ -1,0 +1,179 @@
+{
+  "completed_stages": [
+    "verify_backbone",
+    "domain_us",
+    "domain_sg",
+    "domain_eu",
+    "domain_rainy",
+    "train_router",
+    "train_heads",
+    "benchmark"
+  ],
+  "history": [
+    {
+      "stage": "verify_backbone",
+      "status": "started",
+      "at": "2026-07-25T14:08:50.399841"
+    },
+    {
+      "stage": "verify_backbone",
+      "status": "completed",
+      "at": "2026-07-25T14:09:02.834326"
+    },
+    {
+      "stage": "domain_us",
+      "status": "started",
+      "at": "2026-07-25T14:09:02.848328"
+    },
+    {
+      "stage": "domain_us",
+      "status": "started",
+      "at": "2026-07-25T14:37:15.376412"
+    },
+    {
+      "stage": "domain_us",
+      "status": "started",
+      "at": "2026-07-25T15:18:55.765888"
+    },
+    {
+      "stage": "domain_us",
+      "status": "started",
+      "at": "2026-07-25T15:38:32.008554"
+    },
+    {
+      "stage": "domain_us",
+      "status": "started",
+      "at": "2026-07-30T11:59:30.888273"
+    },
+    {
+      "stage": "domain_us",
+      "status": "started",
+      "at": "2026-07-30T13:20:22.971301"
+    },
+    {
+      "stage": "domain_us",
+      "status": "started",
+      "at": "2026-07-30T14:27:00.685007"
+    },
+    {
+      "stage": "domain_us",
+      "status": "started",
+      "at": "2026-07-30T15:27:54.665536"
+    },
+    {
+      "stage": "domain_us",
+      "status": "started",
+      "at": "2026-07-30T15:30:13.351486"
+    },
+    {
+      "stage": "domain_us",
+      "status": "completed",
+      "at": "2026-07-30T15:36:04.351821"
+    },
+    {
+      "stage": "domain_sg",
+      "status": "started",
+      "at": "2026-07-30T15:36:04.368514"
+    },
+    {
+      "stage": "domain_sg",
+      "status": "started",
+      "at": "2026-07-30T15:58:01.565101"
+    },
+    {
+      "stage": "domain_sg",
+      "status": "started",
+      "at": "2026-07-31T11:32:15.295710"
+    },
+    {
+      "stage": "domain_sg",
+      "status": "started",
+      "at": "2026-07-31T12:31:29.377379"
+    },
+    {
+      "stage": "domain_sg",
+      "status": "completed",
+      "at": "2026-07-31T13:06:54.067593"
+    },
+    {
+      "stage": "domain_eu",
+      "status": "started",
+      "at": "2026-07-31T13:06:54.077326"
+    },
+    {
+      "stage": "domain_eu",
+      "status": "started",
+      "at": "2026-07-31T14:29:21.756241"
+    },
+    {
+      "stage": "domain_eu",
+      "status": "started",
+      "at": "2026-08-03T13:56:21.622115"
+    },
+    {
+      "stage": "domain_eu",
+      "status": "completed",
+      "at": "2026-08-03T14:31:59.891595"
+    },
+    {
+      "stage": "domain_rainy",
+      "status": "started",
+      "at": "2026-08-03T14:31:59.891595"
+    },
+    {
+      "stage": "domain_rainy",
+      "status": "completed",
+      "at": "2026-08-03T16:54:08.669329"
+    },
+    {
+      "stage": "train_router",
+      "status": "started",
+      "at": "2026-08-03T16:54:08.685997"
+    },
+    {
+      "stage": "train_router",
+      "status": "completed",
+      "at": "2026-08-03T16:54:22.386054"
+    },
+    {
+      "stage": "train_heads",
+      "status": "started",
+      "at": "2026-08-03T16:54:22.386054"
+    },
+    {
+      "stage": "train_heads",
+      "status": "started",
+      "at": "2026-08-04T11:19:36.622101"
+    },
+    {
+      "stage": "train_heads",
+      "status": "started",
+      "at": "2026-08-04T12:12:18.055541"
+    },
+    {
+      "stage": "train_heads",
+      "status": "completed",
+      "at": "2026-08-04T12:18:45.806518"
+    },
+    {
+      "stage": "benchmark",
+      "status": "started",
+      "at": "2026-08-04T12:18:45.806518"
+    },
+    {
+      "stage": "benchmark",
+      "status": "completed",
+      "at": "2026-08-04T12:19:03.097066"
+    },
+    {
+      "stage": "benchmark",
+      "status": "started",
+      "at": "2026-08-04T15:51:09.016386"
+    },
+    {
+      "stage": "benchmark",
+      "status": "completed",
+      "at": "2026-08-04T15:51:30.380214"
+    }
+  ]
+}

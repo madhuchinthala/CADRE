@@ -4,9 +4,23 @@
 
 # ── Large Data (DO NOT push to GitHub) ──
 data/
-checkpoints/
 replay_buffer/
-outputs/
+
+# ── Checkpoints: exclude large model files, keep small configs ──
+checkpoints/llava-v1.5-7b/
+checkpoints/**/*.safetensors
+checkpoints/**/*.pt
+checkpoints/**/*.bin
+checkpoints/fisher_matrices/
+
+# ── Keep these checkpoint files (small) ──
+!checkpoints/pipeline_state.json
+!checkpoints/lora_adapters/*/adapter_config.json
+!checkpoints/lora_adapters/*/README.md
+
+# ── Outputs: exclude logs, keep results ──
+outputs/logs/
+# Keep: outputs/cadre_bench/, outputs/visualizations/, outputs/*.pptx, outputs/*.pdf
 
 # ── Python ──
 __pycache__/
